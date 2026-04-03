@@ -10,6 +10,7 @@ pub struct RequestContext<'a> {
     pub method: &'a str,
     pub path: &'a str,
     pub headers: &'a HeaderMap,
+    pub context: &'a HashMap<String, String>,
     pub provider: Option<&'a ProviderConfig>,
     pub model: Option<&'a crate::config::ModelConfig>,
     pub route: Option<&'a RouteConfig>,
@@ -208,6 +209,16 @@ fn resolve_value(source: &str, request: &RequestContext<'_>) -> Result<String, S
             .provider
             .map(|provider| provider.name.clone())
             .ok_or_else(|| "provider.name is unavailable".to_string()),
+        _ if source.starts_with("ctx.") => Ok(request
+            .context
+            .get(source.trim_start_matches("ctx."))
+            .cloned()
+            .unwrap_or_default()),
+        _ if source.starts_with("context.") => Ok(request
+            .context
+            .get(source.trim_start_matches("context."))
+            .cloned()
+            .unwrap_or_default()),
         "route.id" => request
             .route
             .map(|route| route.id.clone())
@@ -311,6 +322,38 @@ pub fn render_template(template: &str, request: &RequestContext<'_>) -> Result<S
         output = output.replacen(full, value, 1);
     }
 
+    while let Some(start) = output.find("${ctx.") {
+        let Some(end) = output[start..].find('}') else {
+            return Err("unterminated ctx template".to_string());
+        };
+        let full = &output[start..start + end + 1];
+        let key = full
+            .strip_prefix("${ctx.")
+            .and_then(|value| value.strip_suffix('}'))
+            .ok_or_else(|| format!("invalid template variable '{full}'"))?;
+        let value = request
+            .context
+            .get(key)
+            .ok_or_else(|| format!("ctx value '{key}' is unavailable"))?;
+        output = output.replacen(full, value, 1);
+    }
+
+    while let Some(start) = output.find("${context.") {
+        let Some(end) = output[start..].find('}') else {
+            return Err("unterminated context template".to_string());
+        };
+        let full = &output[start..start + end + 1];
+        let key = full
+            .strip_prefix("${context.")
+            .and_then(|value| value.strip_suffix('}'))
+            .ok_or_else(|| format!("invalid template variable '{full}'"))?;
+        let value = request
+            .context
+            .get(key)
+            .ok_or_else(|| format!("context value '{key}' is unavailable"))?;
+        output = output.replacen(full, value, 1);
+    }
+
     while let Some(start) = output.find("${env.") {
         let Some(end) = output[start..].find('}') else {
             return Err("unterminated env template".to_string());
@@ -342,6 +385,8 @@ fn replace_optional_token(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use axum::http::{HeaderMap, HeaderValue};
 
     use crate::config::{HeaderActionConfig, HeaderRuleConfig, ModelConfig, ProviderConfig, RouteConfig, RuleScope};
@@ -373,10 +418,12 @@ mod tests {
             model_id: Some("kimi-k2".to_string()),
             path_rewrite: None,
         };
+        let empty_context = HashMap::new();
         let request = RequestContext {
             method: "POST",
             path: "/v1/chat/completions",
             headers: &headers,
+            context: &empty_context,
             provider: Some(&provider),
             model: Some(&model),
             route: Some(&route),
@@ -386,6 +433,14 @@ mod tests {
             .expect("expression should evaluate"));
         assert!(evaluate_expression("header[\"x-target\"] == \"kimi\"", &request)
             .expect("header equality should evaluate"));
+        let mut context = HashMap::new();
+        context.insert("intent".to_string(), "code".to_string());
+        let request_with_context = RequestContext {
+            context: &context,
+            ..request
+        };
+        assert!(evaluate_expression("ctx.intent == \"code\"", &request_with_context)
+            .expect("context equality should evaluate"));
     }
 
     #[test]
@@ -412,10 +467,12 @@ mod tests {
             model_id: Some("kimi-k2".to_string()),
             path_rewrite: None,
         };
+        let empty_context = HashMap::new();
         let request = RequestContext {
             method: "POST",
             path: "/v1/chat/completions",
             headers: &headers,
+            context: &empty_context,
             provider: Some(&provider),
             model: Some(&model),
             route: Some(&route),
@@ -424,6 +481,17 @@ mod tests {
         let rendered =
             render_template("${provider.id}:${model.id}:${route.id}", &request).expect("template should render");
         assert_eq!(rendered, "kimi:kimi-k2:chat-default");
+        let mut context = HashMap::new();
+        context.insert("route_hint".to_string(), "kimi".to_string());
+        let request_with_context = RequestContext {
+            context: &context,
+            ..request
+        };
+        assert_eq!(
+            render_template("${ctx.route_hint}:${model.id}", &request_with_context)
+                .expect("context template should render"),
+            "kimi:kimi-k2"
+        );
     }
 
     #[test]

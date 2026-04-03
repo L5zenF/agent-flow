@@ -13,7 +13,7 @@ use url::Url;
 
 use crate::config::{
     ConditionMode, GatewayConfig, HeaderValueConfig, ModelConfig, ProviderConfig, RouteConfig,
-    RuleGraphConfig, RuleGraphNodeType,
+    RuleGraphConfig, RuleGraphNodeType, RouterClauseConfig,
 };
 use crate::crypto::decrypt_header_value;
 use crate::rules::{build_header_map, evaluate_expression, render_template, RequestContext};
@@ -105,6 +105,16 @@ fn resolve_request<'a>(
     uri: &Uri,
     headers: &'a HeaderMap,
 ) -> Result<Option<RequestResolution<'a>>, String> {
+    let mut workflow_context = HashMap::new();
+    inject_runtime_context(
+        &mut workflow_context,
+        method.as_str(),
+        uri.path(),
+        headers,
+        None,
+        None,
+        None,
+    );
     if let Some(graph) = &config.rule_graph {
         if !graph.nodes.is_empty() {
             return execute_rule_graph(config, graph, method, uri, headers).map(Some);
@@ -119,6 +129,7 @@ fn resolve_request<'a>(
         method: method.as_str(),
         path: uri.path(),
         headers,
+        context: &workflow_context,
         provider: Some(provider),
         model,
         route: Some(route),
@@ -150,6 +161,7 @@ fn execute_rule_graph<'a>(
     let mut selected_provider: Option<&ProviderConfig> = None;
     let mut selected_model: Option<&ModelConfig> = None;
     let mut resolved_path = uri.path().to_string();
+    let mut workflow_context = HashMap::<String, String>::new();
     let mut outgoing_headers = HashMap::<String, String>::new();
     let mut traversed = HashSet::<String>::new();
     let max_steps = graph.nodes.len().saturating_mul(3).max(1);
@@ -160,11 +172,21 @@ fn execute_rule_graph<'a>(
             .copied()
             .ok_or_else(|| format!("rule_graph node '{}' does not exist", current_id))?;
         traversed.insert(current_id.to_string());
+        inject_runtime_context(
+            &mut workflow_context,
+            method.as_str(),
+            &resolved_path,
+            headers,
+            selected_provider,
+            selected_model,
+            fallback_route,
+        );
 
         let request_context = RequestContext {
             method: method.as_str(),
             path: &resolved_path,
             headers,
+            context: &workflow_context,
             provider: selected_provider,
             model: selected_model,
             route: fallback_route,
@@ -172,6 +194,7 @@ fn execute_rule_graph<'a>(
 
         let next = match node.node_type {
             RuleGraphNodeType::Start => next_linear_edge(graph, current_id)?,
+            RuleGraphNodeType::Note => next_linear_edge(graph, current_id)?,
             RuleGraphNodeType::Condition => {
                 let condition = node
                     .condition
@@ -220,12 +243,19 @@ fn execute_rule_graph<'a>(
                 next_linear_edge(graph, current_id)?
             }
             RuleGraphNodeType::SelectModel => {
-                let model_id = node
+                let select_model = node
                     .select_model
                     .as_ref()
-                    .ok_or_else(|| format!("rule_graph node '{}' missing select_model config", node.id))?
-                    .model_id
-                    .as_str();
+                    .ok_or_else(|| format!("rule_graph node '{}' missing select_model config", node.id))?;
+                let provider_id = select_model.provider_id.as_str();
+                let model_id = select_model.model_id.as_str();
+                selected_provider = Some(
+                    config
+                        .providers
+                        .iter()
+                        .find(|provider| provider.id == provider_id)
+                        .ok_or_else(|| format!("rule_graph provider '{}' not found", provider_id))?,
+                );
                 selected_model = Some(
                     config
                         .models
@@ -233,6 +263,18 @@ fn execute_rule_graph<'a>(
                         .find(|model| model.id == model_id)
                         .ok_or_else(|| format!("rule_graph model '{}' not found", model_id))?,
                 );
+                if let (Some(provider), Some(model)) = (selected_provider, selected_model) {
+                    if model.provider_id != provider.id {
+                        return Err(format!(
+                            "rule_graph model '{}' does not belong to provider '{}'",
+                            model.id, provider.id
+                        ));
+                    }
+                    for header in &provider.default_headers {
+                        let value = resolve_provider_header_for_graph(header, config)?;
+                        outgoing_headers.insert(header.name.to_ascii_lowercase(), value);
+                    }
+                }
                 next_linear_edge(graph, current_id)?
             }
             RuleGraphNodeType::RewritePath => {
@@ -241,6 +283,51 @@ fn execute_rule_graph<'a>(
                     .as_ref()
                     .ok_or_else(|| format!("rule_graph node '{}' missing rewrite_path config", node.id))?;
                 resolved_path = render_template(&node_config.value, &request_context)?;
+                next_linear_edge(graph, current_id)?
+            }
+            RuleGraphNodeType::SetContext => {
+                let node_config = node
+                    .set_context
+                    .as_ref()
+                    .ok_or_else(|| format!("rule_graph node '{}' missing set_context config", node.id))?;
+                let value = render_template(&node_config.value_template, &request_context)?;
+                workflow_context.insert(node_config.key.clone(), value);
+                next_linear_edge(graph, current_id)?
+            }
+            RuleGraphNodeType::Router => {
+                let node_config = node
+                    .router
+                    .as_ref()
+                    .ok_or_else(|| format!("rule_graph node '{}' missing router config", node.id))?;
+                let mut matched_target = None;
+                for rule in &node_config.rules {
+                    if rule
+                        .clauses
+                        .iter()
+                        .all(|clause| evaluate_router_clause(clause, &request_context).unwrap_or(false))
+                    {
+                        matched_target = Some(rule.target_node_id.as_str());
+                        break;
+                    }
+                }
+                Some(
+                    matched_target
+                        .or(node_config.fallback_node_id.as_deref())
+                        .ok_or_else(|| {
+                            format!(
+                                "rule_graph router '{}' matched no rule and has no fallback target",
+                                node.id
+                            )
+                        })?,
+                )
+            }
+            RuleGraphNodeType::Log => {
+                let node_config = node
+                    .log
+                    .as_ref()
+                    .ok_or_else(|| format!("rule_graph node '{}' missing log config", node.id))?;
+                let message = render_template(&node_config.message, &request_context)?;
+                info!(node_id = %node.id, message = %message, "rule graph log");
                 next_linear_edge(graph, current_id)?
             }
             RuleGraphNodeType::SetHeader => {
@@ -369,6 +456,16 @@ fn resolve_route<'a>(
     uri: &Uri,
     headers: &'a HeaderMap,
 ) -> Option<(&'a RouteConfig, &'a ProviderConfig, Option<&'a ModelConfig>)> {
+    let mut workflow_context = HashMap::new();
+    inject_runtime_context(
+        &mut workflow_context,
+        method.as_str(),
+        uri.path(),
+        headers,
+        None,
+        None,
+        None,
+    );
     let mut routes = config.routes.iter().filter(|route| route.enabled).collect::<Vec<_>>();
     routes.sort_by(|left, right| right.priority.cmp(&left.priority));
 
@@ -382,6 +479,7 @@ fn resolve_route<'a>(
             method: method.as_str(),
             path: uri.path(),
             headers,
+            context: &workflow_context,
             provider: Some(provider),
             model,
             route: Some(route),
@@ -392,6 +490,59 @@ fn resolve_route<'a>(
     }
 
     None
+}
+
+fn inject_runtime_context(
+    context: &mut HashMap<String, String>,
+    method: &str,
+    path: &str,
+    headers: &HeaderMap,
+    provider: Option<&ProviderConfig>,
+    model: Option<&ModelConfig>,
+    route: Option<&RouteConfig>,
+) {
+    context.insert("method".to_string(), method.to_string());
+    context.insert("path".to_string(), path.to_string());
+
+    context.retain(|key, _| {
+        !key.starts_with("header.")
+            && !matches!(
+                key.as_str(),
+                "provider.id" | "provider.name" | "model.id" | "route.id"
+            )
+    });
+
+    for (name, value) in headers {
+        if let Ok(value) = value.to_str() {
+            context.insert(format!("header.{}", name.as_str().to_ascii_lowercase()), value.to_string());
+        }
+    }
+
+    if let Some(provider) = provider {
+        context.insert("provider.id".to_string(), provider.id.clone());
+        context.insert("provider.name".to_string(), provider.name.clone());
+    }
+    if let Some(model) = model {
+        context.insert("model.id".to_string(), model.id.clone());
+    }
+    if let Some(route) = route {
+        context.insert("route.id".to_string(), route.id.clone());
+    }
+}
+
+fn evaluate_router_clause(
+    clause: &RouterClauseConfig,
+    request: &RequestContext<'_>,
+) -> Result<bool, String> {
+    let source = clause.source.trim();
+    let operator = clause.operator.trim();
+    let value = clause.value.trim().replace('"', "\\\"");
+    let expression = match operator {
+        "==" | "!=" => format!(r#"{source} {operator} "{value}""#),
+        "startsWith" | "contains" => format!(r#"{source}.{operator}("{value}")"#),
+        _ => return Err(format!("unsupported router operator '{}'", clause.operator)),
+    };
+    evaluate_expression(&expression, request)
 }
 
 async fn forward_request(

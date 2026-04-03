@@ -584,11 +584,12 @@ function renameProviderInConfig(
       ? {
           ...current.rule_graph,
           nodes: current.rule_graph.nodes.map((node) =>
-            node.route_provider?.provider_id === previousId
+            node.select_model?.provider_id === previousId
               ? {
                   ...node,
-                  route_provider: {
+                  select_model: {
                     provider_id: effectiveId,
+                    model_id: node.select_model?.model_id ?? "",
                   },
                 }
               : node,
@@ -615,11 +616,15 @@ function removeProviderFromConfig(
       ? {
           ...current.rule_graph,
           nodes: current.rule_graph.nodes.map((node) => {
-            if (node.route_provider?.provider_id === providerId) {
+            if (node.select_model?.provider_id === providerId) {
               return {
                 ...node,
-                route_provider: {
+                select_model: {
                   provider_id: "",
+                  model_id:
+                    node.select_model?.model_id && removedModelIds.has(node.select_model.model_id)
+                      ? ""
+                      : (node.select_model?.model_id ?? ""),
                 },
               };
             }
@@ -628,6 +633,7 @@ function removeProviderFromConfig(
               return {
                 ...node,
                 select_model: {
+                  provider_id: node.select_model?.provider_id ?? "",
                   model_id: "",
                 },
               };
@@ -662,6 +668,7 @@ function renameModelInConfig(
               ? {
                   ...node,
                   select_model: {
+                    provider_id: node.select_model?.provider_id ?? "",
                     model_id: effectiveId,
                   },
                 }
@@ -688,6 +695,7 @@ function removeModelFromConfig(
               ? {
                   ...node,
                   select_model: {
+                    provider_id: node.select_model?.provider_id ?? "",
                     model_id: "",
                   },
                 }

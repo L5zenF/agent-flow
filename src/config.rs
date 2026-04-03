@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -126,6 +126,8 @@ pub struct RuleGraphNode {
     pub node_type: RuleGraphNodeType,
     pub position: GraphPosition,
     #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
     pub condition: Option<ConditionNodeConfig>,
     #[serde(default)]
     pub route_provider: Option<RouteProviderNodeConfig>,
@@ -134,6 +136,12 @@ pub struct RuleGraphNode {
     #[serde(default)]
     pub rewrite_path: Option<ValueNodeConfig>,
     #[serde(default)]
+    pub set_context: Option<SetContextNodeConfig>,
+    #[serde(default)]
+    pub router: Option<RouterNodeConfig>,
+    #[serde(default)]
+    pub log: Option<LogNodeConfig>,
+    #[serde(default)]
     pub set_header: Option<HeaderMutationNodeConfig>,
     #[serde(default)]
     pub remove_header: Option<HeaderNameNodeConfig>,
@@ -141,6 +149,8 @@ pub struct RuleGraphNode {
     pub copy_header: Option<CopyHeaderNodeConfig>,
     #[serde(default)]
     pub set_header_if_absent: Option<HeaderMutationNodeConfig>,
+    #[serde(default)]
+    pub note_node: Option<NoteNodeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,10 +176,14 @@ pub enum RuleGraphNodeType {
     RouteProvider,
     SelectModel,
     RewritePath,
+    SetContext,
+    Router,
+    Log,
     SetHeader,
     RemoveHeader,
     CopyHeader,
     SetHeaderIfAbsent,
+    Note,
     End,
 }
 
@@ -203,12 +217,48 @@ pub struct RouteProviderNodeConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectModelNodeConfig {
+    #[serde(default)]
+    pub provider_id: String,
     pub model_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValueNodeConfig {
     pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetContextNodeConfig {
+    pub key: String,
+    pub value_template: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterNodeConfig {
+    #[serde(default)]
+    pub rules: Vec<RouterRuleConfig>,
+    #[serde(default)]
+    pub fallback_node_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterRuleConfig {
+    pub id: String,
+    #[serde(default)]
+    pub clauses: Vec<RouterClauseConfig>,
+    pub target_node_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterClauseConfig {
+    pub source: String,
+    pub operator: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogNodeConfig {
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +278,12 @@ pub struct CopyHeaderNodeConfig {
     pub to: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteNodeConfig {
+    #[serde(default)]
+    pub text: String,
+}
+
 pub fn load_config(path: &Path) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     parse_config(&raw)
@@ -237,12 +293,13 @@ pub fn save_config_atomic(
     path: &Path,
     config: &GatewayConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    validate_config(config)?;
+    let normalized = normalize_legacy_rule_graph(config.clone());
+    validate_config(&normalized)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    let serialized = toml::to_string_pretty(config)?;
+    let serialized = toml::to_string_pretty(&normalized)?;
     let temp_path = path.with_extension("toml.tmp");
     std::fs::write(&temp_path, serialized)?;
     std::fs::rename(temp_path, path)?;
@@ -251,6 +308,7 @@ pub fn save_config_atomic(
 
 pub fn parse_config(raw: &str) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
     let config: GatewayConfig = toml::from_str(raw)?;
+    let config = normalize_legacy_rule_graph(config);
     validate_config(&config)?;
     Ok(config)
 }
@@ -330,16 +388,142 @@ pub fn validate_config(config: &GatewayConfig) -> Result<(), Box<dyn std::error:
     }
 
     if let Some(graph) = &config.rule_graph {
-        validate_rule_graph(graph, &provider_ids, &model_ids)?;
+        validate_rule_graph(graph, &provider_ids, &model_ids, &config.models)?;
     }
 
     Ok(())
+}
+
+pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
+    let Some(graph) = config.rule_graph.take() else {
+        return config;
+    };
+
+    let node_map = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+
+    let incoming_edges = graph
+        .edges
+        .iter()
+        .fold(HashMap::<&str, Vec<&RuleGraphEdge>>::new(), |mut acc, edge| {
+            acc.entry(edge.target.as_str()).or_default().push(edge);
+            acc
+        });
+    let outgoing_edges = graph
+        .edges
+        .iter()
+        .fold(HashMap::<&str, Vec<&RuleGraphEdge>>::new(), |mut acc, edge| {
+            acc.entry(edge.source.as_str()).or_default().push(edge);
+            acc
+        });
+
+    let mut route_nodes_to_remove = HashSet::<String>::new();
+    let mut updated_nodes = Vec::with_capacity(graph.nodes.len());
+    let mut rewritten_edges = graph.edges.clone();
+
+    for node in &graph.nodes {
+        if node.node_type != RuleGraphNodeType::SelectModel {
+            continue;
+        }
+
+        let Some(select_model) = &node.select_model else {
+            continue;
+        };
+        if !select_model.provider_id.trim().is_empty() {
+            continue;
+        }
+
+        let Some(incoming) = incoming_edges.get(node.id.as_str()) else {
+            continue;
+        };
+        if incoming.len() != 1 {
+            continue;
+        }
+
+        let route_edge = incoming[0];
+        let Some(route_node) = node_map.get(route_edge.source.as_str()) else {
+            continue;
+        };
+        if route_node.node_type != RuleGraphNodeType::RouteProvider {
+            continue;
+        }
+        let Some(route_config) = route_node.route_provider.as_ref() else {
+            continue;
+        };
+
+        let Some(route_outgoing) = outgoing_edges.get(route_node.id.as_str()) else {
+            continue;
+        };
+        if route_outgoing.len() != 1 || route_outgoing[0].target != node.id {
+            continue;
+        }
+
+        route_nodes_to_remove.insert(route_node.id.clone());
+        updated_nodes.push(RuleGraphNode {
+            select_model: Some(SelectModelNodeConfig {
+                provider_id: route_config.provider_id.clone(),
+                model_id: select_model.model_id.clone(),
+            }),
+            ..node.clone()
+        });
+
+        rewritten_edges = rewritten_edges
+            .into_iter()
+            .filter(|edge| edge.id != route_edge.id)
+            .map(|edge| {
+                if edge.target == route_node.id {
+                    RuleGraphEdge {
+                        target: node.id.clone(),
+                        ..edge
+                    }
+                } else if edge.source == route_node.id {
+                    RuleGraphEdge {
+                        source: node.id.clone(),
+                        ..edge
+                    }
+                } else {
+                    edge
+                }
+            })
+            .collect();
+    }
+
+    if route_nodes_to_remove.is_empty() {
+        config.rule_graph = Some(graph);
+        return config;
+    }
+
+    let updated_node_ids = updated_nodes
+        .iter()
+        .map(|node| (node.id.clone(), node.clone()))
+        .collect::<HashMap<_, _>>();
+
+    config.rule_graph = Some(RuleGraphConfig {
+        nodes: graph
+            .nodes
+            .into_iter()
+            .filter(|node| !route_nodes_to_remove.contains(&node.id))
+            .map(|node| updated_node_ids.get(&node.id).cloned().unwrap_or(node))
+            .collect(),
+        edges: rewritten_edges
+            .into_iter()
+            .filter(|edge| {
+                !route_nodes_to_remove.contains(&edge.source) && !route_nodes_to_remove.contains(&edge.target)
+            })
+            .collect(),
+        ..graph
+    });
+    config
 }
 
 fn validate_rule_graph(
     graph: &RuleGraphConfig,
     provider_ids: &HashSet<&str>,
     model_ids: &HashSet<&str>,
+    models: &[ModelConfig],
 ) -> Result<(), Box<dyn std::error::Error>> {
     if graph.start_node_id.trim().is_empty() {
         return Err("rule_graph start_node_id cannot be empty".into());
@@ -375,7 +559,7 @@ fn validate_rule_graph(
     }
 
     for node in &graph.nodes {
-        validate_rule_graph_node(node, graph, provider_ids, model_ids)?;
+        validate_rule_graph_node(node, graph, provider_ids, model_ids, models)?;
     }
 
     validate_rule_graph_acyclic(graph)?;
@@ -388,9 +572,10 @@ fn validate_rule_graph_node(
     graph: &RuleGraphConfig,
     provider_ids: &HashSet<&str>,
     model_ids: &HashSet<&str>,
+    models: &[ModelConfig],
 ) -> Result<(), Box<dyn std::error::Error>> {
     match node.node_type {
-        RuleGraphNodeType::Start | RuleGraphNodeType::End => {}
+        RuleGraphNodeType::Start | RuleGraphNodeType::End | RuleGraphNodeType::Note => {}
         RuleGraphNodeType::Condition => {
             let Some(condition) = &node.condition else {
                 return Err(format!("rule_graph node '{}' missing condition config", node.id).into());
@@ -450,6 +635,13 @@ fn validate_rule_graph_node(
             let Some(config) = &node.select_model else {
                 return Err(format!("rule_graph node '{}' missing select_model config", node.id).into());
             };
+            if !provider_ids.contains(config.provider_id.as_str()) {
+                return Err(format!(
+                    "rule_graph node '{}' references missing provider '{}'",
+                    node.id, config.provider_id
+                )
+                .into());
+            }
             if !model_ids.contains(config.model_id.as_str()) {
                 return Err(format!(
                     "rule_graph node '{}' references missing model '{}'",
@@ -457,8 +649,27 @@ fn validate_rule_graph_node(
                 )
                 .into());
             }
+            let model = models
+                .iter()
+                .find(|model| model.id == config.model_id)
+                .ok_or_else(|| {
+                    format!(
+                        "rule_graph node '{}' references missing model '{}'",
+                        node.id, config.model_id
+                    )
+                })?;
+            if model.provider_id != config.provider_id {
+                return Err(format!(
+                    "rule_graph node '{}' model '{}' does not belong to provider '{}'",
+                    node.id, config.model_id, config.provider_id
+                )
+                .into());
+            }
         }
         RuleGraphNodeType::RewritePath => validate_value_node(node.id.as_str(), node.rewrite_path.as_ref())?,
+        RuleGraphNodeType::SetContext => validate_set_context_node(node.id.as_str(), node.set_context.as_ref())?,
+        RuleGraphNodeType::Router => validate_router_node(node.id.as_str(), graph, node.router.as_ref())?,
+        RuleGraphNodeType::Log => validate_log_node(node.id.as_str(), node.log.as_ref())?,
         RuleGraphNodeType::SetHeader => validate_header_mutation_node(node.id.as_str(), node.set_header.as_ref())?,
         RuleGraphNodeType::RemoveHeader => validate_header_name_node(node.id.as_str(), node.remove_header.as_ref())?,
         RuleGraphNodeType::CopyHeader => validate_copy_header_node(node.id.as_str(), node.copy_header.as_ref())?,
@@ -479,6 +690,78 @@ fn validate_value_node(
     };
     if config.value.trim().is_empty() {
         return Err(format!("rule_graph node '{node_id}' value cannot be empty").into());
+    }
+    Ok(())
+}
+
+fn validate_set_context_node(
+    node_id: &str,
+    config: Option<&SetContextNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing set_context config").into());
+    };
+    if config.key.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' context key cannot be empty").into());
+    }
+    if config.value_template.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' context value_template cannot be empty").into());
+    }
+    Ok(())
+}
+
+fn validate_router_node(
+    node_id: &str,
+    graph: &RuleGraphConfig,
+    config: Option<&RouterNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing router config").into());
+    };
+    if config.rules.is_empty() {
+        return Err(format!("rule_graph node '{node_id}' must define at least one router rule").into());
+    }
+
+    let node_ids = graph.nodes.iter().map(|node| node.id.as_str()).collect::<HashSet<_>>();
+    let mut rule_ids = HashSet::new();
+    for rule in &config.rules {
+        if rule.id.trim().is_empty() {
+            return Err(format!("rule_graph node '{node_id}' contains a router rule with empty id").into());
+        }
+        if !rule_ids.insert(rule.id.as_str()) {
+            return Err(format!("rule_graph node '{node_id}' has duplicate router rule id '{}'", rule.id).into());
+        }
+        if rule.clauses.is_empty() {
+            return Err(format!("rule_graph node '{node_id}' router rule '{}' must contain at least one clause", rule.id).into());
+        }
+        if rule.target_node_id.trim().is_empty() || !node_ids.contains(rule.target_node_id.as_str()) {
+            return Err(format!("rule_graph node '{node_id}' router rule '{}' references missing target '{}'", rule.id, rule.target_node_id).into());
+        }
+        for clause in &rule.clauses {
+            if clause.source.trim().is_empty() || clause.operator.trim().is_empty() || clause.value.trim().is_empty() {
+                return Err(format!("rule_graph node '{node_id}' router rule '{}' contains an incomplete clause", rule.id).into());
+            }
+        }
+    }
+
+    if let Some(fallback) = config.fallback_node_id.as_deref() {
+        if fallback.trim().is_empty() || !node_ids.contains(fallback) {
+            return Err(format!("rule_graph node '{node_id}' references missing fallback target '{fallback}'").into());
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_log_node(
+    node_id: &str,
+    config: Option<&LogNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing log config").into());
+    };
+    if config.message.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' log message cannot be empty").into());
     }
     Ok(())
 }
@@ -609,7 +892,7 @@ fn default_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_config, RuleScope};
+    use super::{parse_config, RuleGraphNodeType, RuleScope};
 
     const VALID_CONFIG: &str = r#"
 listen = "127.0.0.1:9001"
@@ -709,6 +992,87 @@ target = "end"
         assert_eq!(config.header_rules.len(), 1);
         assert_eq!(config.header_rules[0].scope, RuleScope::Model);
         assert!(config.rule_graph.is_some());
+    }
+
+    #[test]
+    fn normalizes_legacy_route_provider_chain() {
+        let legacy = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[[models]]
+id = "kimi-k2"
+name = "Kimi K2"
+provider_id = "kimi"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "provider-kimi"
+type = "route_provider"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+
+[[rule_graph.nodes]]
+id = "model-kimi"
+type = "select_model"
+position = { x = 240.0, y = 0.0 }
+
+[rule_graph.nodes.select_model]
+provider_id = ""
+model_id = "kimi-k2"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 360.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "edge-1"
+source = "start"
+target = "provider-kimi"
+
+[[rule_graph.edges]]
+id = "edge-2"
+source = "provider-kimi"
+target = "model-kimi"
+
+[[rule_graph.edges]]
+id = "edge-3"
+source = "model-kimi"
+target = "end"
+"#;
+
+        let config = parse_config(&legacy).expect("legacy config should normalize");
+        let graph = config.rule_graph.expect("graph should exist");
+
+        assert!(graph.nodes.iter().all(|node| node.node_type != RuleGraphNodeType::RouteProvider));
+        let select_model = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "model-kimi")
+            .and_then(|node| node.select_model.as_ref())
+            .expect("select_model node should remain");
+        assert_eq!(select_model.provider_id, "kimi");
+        assert_eq!(select_model.model_id, "kimi-k2");
+        assert!(
+            graph.edges.iter().any(|edge| edge.source == "start" && edge.target == "model-kimi"),
+            "incoming edge should be rewired to the merged select_model node"
+        );
     }
 
     #[test]

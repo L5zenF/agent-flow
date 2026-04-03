@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use tokio::sync::RwLock;
 
-use crate::config::{parse_config, save_config_atomic, GatewayConfig};
+use crate::config::{normalize_legacy_rule_graph, parse_config, save_config_atomic, GatewayConfig};
 
 #[derive(Clone)]
 pub struct AdminState {
@@ -36,9 +36,10 @@ pub async fn put_config(
     State(state): State<AdminState>,
     Json(candidate): Json<GatewayConfig>,
 ) -> impl IntoResponse {
-    match save_config_atomic(&state.config_path, &candidate).map_err(|error| error.to_string()) {
+    let normalized = normalize_legacy_rule_graph(candidate);
+    match save_config_atomic(&state.config_path, &normalized).map_err(|error| error.to_string()) {
         Ok(()) => {
-            *state.config.write().await = candidate;
+            *state.config.write().await = normalized;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),

@@ -56,13 +56,16 @@ export type GraphPosition = {
 export type RuleGraphNodeType =
   | "start"
   | "condition"
-  | "route_provider"
   | "select_model"
   | "rewrite_path"
+  | "set_context"
+  | "router"
+  | "log"
   | "set_header"
   | "remove_header"
   | "copy_header"
   | "set_header_if_absent"
+  | "note"
   | "end";
 
 export type ConditionMode = "builder" | "expression";
@@ -77,19 +80,37 @@ export type RuleGraphNode = {
   id: string;
   type: RuleGraphNodeType;
   position: GraphPosition;
+  note?: string | null;
   condition?: {
     mode: ConditionMode;
     expression?: string | null;
     builder?: ConditionBuilderConfig | null;
   } | null;
-  route_provider?: {
-    provider_id: string;
-  } | null;
   select_model?: {
+    provider_id: string;
     model_id: string;
   } | null;
   rewrite_path?: {
     value: string;
+  } | null;
+  set_context?: {
+    key: string;
+    value_template: string;
+  } | null;
+  router?: {
+    rules: Array<{
+      id: string;
+      clauses: Array<{
+        source: string;
+        operator: string;
+        value: string;
+      }>;
+      target_node_id: string;
+    }>;
+    fallback_node_id?: string | null;
+  } | null;
+  log?: {
+    message: string;
   } | null;
   set_header?: {
     name: string;
@@ -105,6 +126,9 @@ export type RuleGraphNode = {
   set_header_if_absent?: {
     name: string;
     value: string;
+  } | null;
+  note_node?: {
+    text: string;
   } | null;
 };
 
