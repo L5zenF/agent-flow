@@ -48,6 +48,80 @@ export type HeaderRuleConfig = {
   actions: HeaderAction[];
 };
 
+export type GraphPosition = {
+  x: number;
+  y: number;
+};
+
+export type RuleGraphNodeType =
+  | "start"
+  | "condition"
+  | "route_provider"
+  | "select_model"
+  | "rewrite_path"
+  | "set_header"
+  | "remove_header"
+  | "copy_header"
+  | "set_header_if_absent"
+  | "end";
+
+export type ConditionMode = "builder" | "expression";
+
+export type ConditionBuilderConfig = {
+  field: string;
+  operator: string;
+  value: string;
+};
+
+export type RuleGraphNode = {
+  id: string;
+  type: RuleGraphNodeType;
+  position: GraphPosition;
+  condition?: {
+    mode: ConditionMode;
+    expression?: string | null;
+    builder?: ConditionBuilderConfig | null;
+  } | null;
+  route_provider?: {
+    provider_id: string;
+  } | null;
+  select_model?: {
+    model_id: string;
+  } | null;
+  rewrite_path?: {
+    value: string;
+  } | null;
+  set_header?: {
+    name: string;
+    value: string;
+  } | null;
+  remove_header?: {
+    name: string;
+  } | null;
+  copy_header?: {
+    from: string;
+    to: string;
+  } | null;
+  set_header_if_absent?: {
+    name: string;
+    value: string;
+  } | null;
+};
+
+export type RuleGraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  source_handle?: string | null;
+};
+
+export type RuleGraphConfig = {
+  version: number;
+  start_node_id: string;
+  nodes: RuleGraphNode[];
+  edges: RuleGraphEdge[];
+};
+
 export type GatewayConfig = {
   listen: string;
   admin_listen: string;
@@ -56,6 +130,7 @@ export type GatewayConfig = {
   models: ModelConfig[];
   routes: RouteConfig[];
   header_rules: HeaderRuleConfig[];
+  rule_graph?: RuleGraphConfig | null;
 };
 
 export type GatewayConfigWire = Omit<GatewayConfig, "providers"> & {
@@ -79,6 +154,23 @@ export const emptyConfig = (): GatewayConfig => ({
   models: [],
   routes: [],
   header_rules: [],
+  rule_graph: {
+    version: 1,
+    start_node_id: "start",
+    nodes: [
+      {
+        id: "start",
+        type: "start",
+        position: { x: 80, y: 160 },
+      },
+      {
+        id: "end",
+        type: "end",
+        position: { x: 880, y: 160 },
+      },
+    ],
+    edges: [],
+  },
 });
 
 export function normalizeConfig(input: GatewayConfigWire): GatewayConfig {

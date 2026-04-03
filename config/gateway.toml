@@ -41,3 +41,90 @@ when = 'path.startsWith("/v1/")'
 type = "set"
 name = "X-Model"
 value = "${model.id}"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 80.0, y = 200.0 }
+
+[[rule_graph.nodes]]
+id = "chat-condition"
+type = "condition"
+position = { x = 320.0, y = 200.0 }
+
+[rule_graph.nodes.condition]
+mode = "expression"
+expression = 'path.startsWith("/v1/chat/completions") && method == "POST"'
+
+[[rule_graph.nodes]]
+id = "route-kimi"
+type = "route_provider"
+position = { x = 560.0, y = 120.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+
+[[rule_graph.nodes]]
+id = "select-k2"
+type = "select_model"
+position = { x = 800.0, y = 120.0 }
+
+[rule_graph.nodes.select_model]
+model_id = "kimi-k2"
+
+[[rule_graph.nodes]]
+id = "rewrite-chat"
+type = "rewrite_path"
+position = { x = 1040.0, y = 120.0 }
+
+[rule_graph.nodes.rewrite_path]
+value = "/coding/v1/chat/completions"
+
+[[rule_graph.nodes]]
+id = "set-model-header"
+type = "set_header"
+position = { x = 1280.0, y = 120.0 }
+
+[rule_graph.nodes.set_header]
+name = "X-Model"
+value = "${model.id}"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 1520.0, y = 120.0 }
+
+[[rule_graph.edges]]
+id = "e1"
+source = "start"
+target = "chat-condition"
+
+[[rule_graph.edges]]
+id = "e2"
+source = "chat-condition"
+source_handle = "true"
+target = "route-kimi"
+
+[[rule_graph.edges]]
+id = "e3"
+source = "route-kimi"
+target = "select-k2"
+
+[[rule_graph.edges]]
+id = "e4"
+source = "select-k2"
+target = "rewrite-chat"
+
+[[rule_graph.edges]]
+id = "e5"
+source = "rewrite-chat"
+target = "set-model-header"
+
+[[rule_graph.edges]]
+id = "e6"
+source = "set-model-header"
+target = "end"

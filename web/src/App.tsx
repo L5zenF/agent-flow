@@ -14,14 +14,16 @@ import { emptyConfig, type GatewayConfig, type HeaderAction } from "@/lib/types"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { RuleGraphEditor } from "@/components/rule-graph-editor";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-type TabKey = "providers" | "models" | "routes" | "rules" | "raw";
+type TabKey = "providers" | "rule_graph" | "models" | "routes" | "rules" | "raw";
 type DialogTab = "basic" | "models" | "headers" | "routes" | "rules";
 
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "providers", label: "Providers" },
+  { key: "rule_graph", label: "Rule Graph" },
   { key: "models", label: "Models" },
   { key: "routes", label: "Routes" },
   { key: "rules", label: "Rules" },
@@ -167,6 +169,13 @@ export default function App() {
               setDialogTab(nextTab);
             }}
           />
+        ) : tab === "rule_graph" ? (
+          <SimpleResourceView
+            title="Rule Graph"
+            description="Global visual rule graph. This becomes the primary route and header rule entrypoint."
+          >
+            <RuleGraphEditor config={config} setConfig={setConfig} />
+          </SimpleResourceView>
         ) : tab === "models" ? (
           <SimpleResourceView title="Models" description="Direct list view for models.">
             {config.models.map((model, index) => (

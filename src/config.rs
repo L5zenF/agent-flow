@@ -19,6 +19,8 @@ pub struct GatewayConfig {
     pub routes: Vec<RouteConfig>,
     #[serde(default)]
     pub header_rules: Vec<HeaderRuleConfig>,
+    #[serde(default)]
+    pub rule_graph: Option<RuleGraphConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +106,126 @@ pub enum HeaderValueConfig {
         secret_env: Option<String>,
     },
     Plain { value: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleGraphConfig {
+    #[serde(default = "default_rule_graph_version")]
+    pub version: u32,
+    pub start_node_id: String,
+    #[serde(default)]
+    pub nodes: Vec<RuleGraphNode>,
+    #[serde(default)]
+    pub edges: Vec<RuleGraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleGraphNode {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub node_type: RuleGraphNodeType,
+    pub position: GraphPosition,
+    #[serde(default)]
+    pub condition: Option<ConditionNodeConfig>,
+    #[serde(default)]
+    pub route_provider: Option<RouteProviderNodeConfig>,
+    #[serde(default)]
+    pub select_model: Option<SelectModelNodeConfig>,
+    #[serde(default)]
+    pub rewrite_path: Option<ValueNodeConfig>,
+    #[serde(default)]
+    pub set_header: Option<HeaderMutationNodeConfig>,
+    #[serde(default)]
+    pub remove_header: Option<HeaderNameNodeConfig>,
+    #[serde(default)]
+    pub copy_header: Option<CopyHeaderNodeConfig>,
+    #[serde(default)]
+    pub set_header_if_absent: Option<HeaderMutationNodeConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphPosition {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleGraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    #[serde(default)]
+    pub source_handle: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleGraphNodeType {
+    Start,
+    Condition,
+    RouteProvider,
+    SelectModel,
+    RewritePath,
+    SetHeader,
+    RemoveHeader,
+    CopyHeader,
+    SetHeaderIfAbsent,
+    End,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConditionNodeConfig {
+    pub mode: ConditionMode,
+    #[serde(default)]
+    pub expression: Option<String>,
+    #[serde(default)]
+    pub builder: Option<ConditionBuilderConfig>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConditionMode {
+    Builder,
+    Expression,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConditionBuilderConfig {
+    pub field: String,
+    pub operator: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteProviderNodeConfig {
+    pub provider_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectModelNodeConfig {
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValueNodeConfig {
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeaderMutationNodeConfig {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeaderNameNodeConfig {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopyHeaderNodeConfig {
+    pub from: String,
+    pub to: String,
 }
 
 pub fn load_config(path: &Path) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
@@ -207,7 +329,226 @@ pub fn validate_config(config: &GatewayConfig) -> Result<(), Box<dyn std::error:
         }
     }
 
+    if let Some(graph) = &config.rule_graph {
+        validate_rule_graph(graph, &provider_ids, &model_ids)?;
+    }
+
     Ok(())
+}
+
+fn validate_rule_graph(
+    graph: &RuleGraphConfig,
+    provider_ids: &HashSet<&str>,
+    model_ids: &HashSet<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if graph.start_node_id.trim().is_empty() {
+        return Err("rule_graph start_node_id cannot be empty".into());
+    }
+
+    let node_ids = unique_ids(graph.nodes.iter().map(|node| node.id.as_str()), "rule_graph node")?;
+    unique_ids(graph.edges.iter().map(|edge| edge.id.as_str()), "rule_graph edge")?;
+
+    if !node_ids.contains(graph.start_node_id.as_str()) {
+        return Err(format!(
+            "rule_graph start node '{}' does not exist",
+            graph.start_node_id
+        )
+        .into());
+    }
+
+    let start_count = graph
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == RuleGraphNodeType::Start)
+        .count();
+    if start_count != 1 {
+        return Err(format!("rule_graph requires exactly one start node, found {start_count}").into());
+    }
+
+    for edge in &graph.edges {
+        if !node_ids.contains(edge.source.as_str()) {
+            return Err(format!("rule_graph edge '{}' missing source '{}'", edge.id, edge.source).into());
+        }
+        if !node_ids.contains(edge.target.as_str()) {
+            return Err(format!("rule_graph edge '{}' missing target '{}'", edge.id, edge.target).into());
+        }
+    }
+
+    for node in &graph.nodes {
+        validate_rule_graph_node(node, graph, provider_ids, model_ids)?;
+    }
+
+    validate_rule_graph_acyclic(graph)?;
+
+    Ok(())
+}
+
+fn validate_rule_graph_node(
+    node: &RuleGraphNode,
+    graph: &RuleGraphConfig,
+    provider_ids: &HashSet<&str>,
+    model_ids: &HashSet<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match node.node_type {
+        RuleGraphNodeType::Start | RuleGraphNodeType::End => {}
+        RuleGraphNodeType::Condition => {
+            let Some(condition) = &node.condition else {
+                return Err(format!("rule_graph node '{}' missing condition config", node.id).into());
+            };
+            match condition.mode {
+                ConditionMode::Expression => {
+                    if condition.expression.as_deref().unwrap_or("").trim().is_empty() {
+                        return Err(format!(
+                            "rule_graph condition node '{}' requires expression",
+                            node.id
+                        )
+                        .into());
+                    }
+                }
+                ConditionMode::Builder => {
+                    let Some(builder) = &condition.builder else {
+                        return Err(format!(
+                            "rule_graph condition node '{}' requires builder config",
+                            node.id
+                        )
+                        .into());
+                    };
+                    if builder.field.trim().is_empty()
+                        || builder.operator.trim().is_empty()
+                        || builder.value.trim().is_empty()
+                    {
+                        return Err(format!(
+                            "rule_graph condition node '{}' builder fields cannot be empty",
+                            node.id
+                        )
+                        .into());
+                    }
+                }
+            }
+            let outgoing = graph.edges.iter().filter(|edge| edge.source == node.id).count();
+            if outgoing > 2 {
+                return Err(format!(
+                    "rule_graph condition node '{}' supports at most 2 outgoing edges",
+                    node.id
+                )
+                .into());
+            }
+        }
+        RuleGraphNodeType::RouteProvider => {
+            let Some(config) = &node.route_provider else {
+                return Err(format!("rule_graph node '{}' missing route_provider config", node.id).into());
+            };
+            if !provider_ids.contains(config.provider_id.as_str()) {
+                return Err(format!(
+                    "rule_graph node '{}' references missing provider '{}'",
+                    node.id, config.provider_id
+                )
+                .into());
+            }
+        }
+        RuleGraphNodeType::SelectModel => {
+            let Some(config) = &node.select_model else {
+                return Err(format!("rule_graph node '{}' missing select_model config", node.id).into());
+            };
+            if !model_ids.contains(config.model_id.as_str()) {
+                return Err(format!(
+                    "rule_graph node '{}' references missing model '{}'",
+                    node.id, config.model_id
+                )
+                .into());
+            }
+        }
+        RuleGraphNodeType::RewritePath => validate_value_node(node.id.as_str(), node.rewrite_path.as_ref())?,
+        RuleGraphNodeType::SetHeader => validate_header_mutation_node(node.id.as_str(), node.set_header.as_ref())?,
+        RuleGraphNodeType::RemoveHeader => validate_header_name_node(node.id.as_str(), node.remove_header.as_ref())?,
+        RuleGraphNodeType::CopyHeader => validate_copy_header_node(node.id.as_str(), node.copy_header.as_ref())?,
+        RuleGraphNodeType::SetHeaderIfAbsent => {
+            validate_header_mutation_node(node.id.as_str(), node.set_header_if_absent.as_ref())?
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_value_node(
+    node_id: &str,
+    config: Option<&ValueNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing value config").into());
+    };
+    if config.value.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' value cannot be empty").into());
+    }
+    Ok(())
+}
+
+fn validate_header_mutation_node(
+    node_id: &str,
+    config: Option<&HeaderMutationNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing header config").into());
+    };
+    if config.name.trim().is_empty() || config.value.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' header name/value cannot be empty").into());
+    }
+    Ok(())
+}
+
+fn validate_header_name_node(
+    node_id: &str,
+    config: Option<&HeaderNameNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing remove_header config").into());
+    };
+    if config.name.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' header name cannot be empty").into());
+    }
+    Ok(())
+}
+
+fn validate_copy_header_node(
+    node_id: &str,
+    config: Option<&CopyHeaderNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing copy_header config").into());
+    };
+    if config.from.trim().is_empty() || config.to.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' copy header fields cannot be empty").into());
+    }
+    Ok(())
+}
+
+fn validate_rule_graph_acyclic(graph: &RuleGraphConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+
+    fn visit<'a>(
+        node_id: &'a str,
+        graph: &'a RuleGraphConfig,
+        visiting: &mut HashSet<&'a str>,
+        visited: &mut HashSet<&'a str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if visited.contains(node_id) {
+            return Ok(());
+        }
+        if !visiting.insert(node_id) {
+            return Err(format!("rule_graph contains a cycle at node '{node_id}'").into());
+        }
+
+        for edge in graph.edges.iter().filter(|edge| edge.source == node_id) {
+            visit(edge.target.as_str(), graph, visiting, visited)?;
+        }
+
+        visiting.remove(node_id);
+        visited.insert(node_id);
+        Ok(())
+    }
+
+    visit(graph.start_node_id.as_str(), graph, &mut visiting, &mut visited)
 }
 
 fn validate_rule_target(
@@ -258,6 +599,10 @@ fn default_admin_listen() -> String {
     "127.0.0.1:9002".to_string()
 }
 
+fn default_rule_graph_version() -> u32 {
+    1
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -305,6 +650,53 @@ when = 'path.startsWith("/v1/")'
 type = "set"
 name = "X-Model"
 value = "${model.id}"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "cond-1"
+type = "condition"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.condition]
+mode = "expression"
+expression = 'path.startsWith("/v1/")'
+
+[[rule_graph.nodes]]
+id = "provider-kimi"
+type = "route_provider"
+position = { x = 240.0, y = 0.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 360.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "edge-1"
+source = "start"
+target = "cond-1"
+
+[[rule_graph.edges]]
+id = "edge-2"
+source = "cond-1"
+source_handle = "true"
+target = "provider-kimi"
+
+[[rule_graph.edges]]
+id = "edge-3"
+source = "provider-kimi"
+target = "end"
 "#;
 
     #[test]
@@ -316,6 +708,7 @@ value = "${model.id}"
         assert_eq!(config.routes.len(), 1);
         assert_eq!(config.header_rules.len(), 1);
         assert_eq!(config.header_rules[0].scope, RuleScope::Model);
+        assert!(config.rule_graph.is_some());
     }
 
     #[test]
@@ -340,6 +733,18 @@ value = "${model.id}"
             error
                 .to_string()
                 .contains("must not define target_id for global scope"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_rule_graph_with_cycle() {
+        let invalid = format!(
+            "{VALID_CONFIG}\n[[rule_graph.edges]]\nid = \"edge-4\"\nsource = \"end\"\ntarget = \"start\"\n"
+        );
+        let error = parse_config(&invalid).expect_err("cyclic rule graph should fail");
+        assert!(
+            error.to_string().contains("contains a cycle"),
             "unexpected error: {error}"
         );
     }

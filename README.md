@@ -7,6 +7,7 @@
 - 只做请求转发、path rewrite、请求头注入/删除/覆盖
 - 用本地文件配置 providers / models / routes / header rules
 - 自带 React + shadcn 风格管理面板
+- 支持基于 React Flow 的全局可视化规则图
 
 ## 核心能力
 
@@ -99,6 +100,38 @@ value = "${model.id}"
 - `${request.header.Authorization}`
 - `${env.PROXY_SECRET}`
 
+## 可视化规则图
+
+管理面板新增 `Rule Graph` 视图：
+
+- 一张全局图，所有请求先进图
+- 图中节点负责：
+  - 条件分支
+  - 选择 provider
+  - 选择 model
+  - path rewrite
+  - 设置 / 删除 / 复制请求头
+
+当前节点类型：
+
+- `start`
+- `condition`
+- `route_provider`
+- `select_model`
+- `rewrite_path`
+- `set_header`
+- `remove_header`
+- `copy_header`
+- `set_header_if_absent`
+- `end`
+
+当前条件节点支持：
+
+- `expression`
+- `builder` 数据模型已预留，MVP 阶段以前端表达式编辑为主
+
+如果 `config/gateway.toml` 中存在 `rule_graph`，运行时优先走图；没有图时才回退到旧的 `routes` / `header_rules`。
+
 ## 启动
 
 启动网关和管理面板：
@@ -117,6 +150,14 @@ cargo run -- --config config/gateway.toml
 ```text
 http://127.0.0.1:9002/admin/ui
 ```
+
+图编辑入口：
+
+- 打开面板后切到 `Rule Graph`
+- 左侧添加节点
+- 中间拖拽与连线
+- 右侧编辑当前节点属性
+- 保存后写回 `config/gateway.toml`
 
 ## 管理 API
 

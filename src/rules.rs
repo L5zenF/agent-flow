@@ -10,9 +10,9 @@ pub struct RequestContext<'a> {
     pub method: &'a str,
     pub path: &'a str,
     pub headers: &'a HeaderMap,
-    pub provider: &'a ProviderConfig,
+    pub provider: Option<&'a ProviderConfig>,
     pub model: Option<&'a crate::config::ModelConfig>,
-    pub route: &'a RouteConfig,
+    pub route: Option<&'a RouteConfig>,
 }
 
 pub fn build_header_map(
@@ -20,8 +20,11 @@ pub fn build_header_map(
     request: &RequestContext<'_>,
 ) -> Result<Vec<(HeaderName, HeaderValue)>, String> {
     let mut resolved = HashMap::<String, String>::new();
+    let provider = request
+        .provider
+        .ok_or_else(|| "provider is unavailable for header resolution".to_string())?;
 
-    for header in &request.provider.default_headers {
+    for header in &provider.default_headers {
         let value = resolve_provider_header(header, config.default_secret_env.as_deref())?;
         resolved.insert(header.name.to_ascii_lowercase(), value);
     }
@@ -61,7 +64,12 @@ fn ordered_rules<'a>(
     for rule in &config.header_rules {
         match rule.scope {
             RuleScope::Global => global.push(rule),
-            RuleScope::Provider if rule.target_id.as_deref() == Some(request.provider.id.as_str()) => {
+            RuleScope::Provider
+                if request
+                    .provider
+                    .map(|provider| rule.target_id.as_deref() == Some(provider.id.as_str()))
+                    .unwrap_or(false) =>
+            {
                 provider.push(rule)
             }
             RuleScope::Model
@@ -72,7 +80,12 @@ fn ordered_rules<'a>(
             {
                 model.push(rule)
             }
-            RuleScope::Route if rule.target_id.as_deref() == Some(request.route.id.as_str()) => {
+            RuleScope::Route
+                if request
+                    .route
+                    .map(|route| rule.target_id.as_deref() == Some(route.id.as_str()))
+                    .unwrap_or(false) =>
+            {
                 route.push(rule)
             }
             _ => {}
@@ -187,9 +200,18 @@ fn resolve_value(source: &str, request: &RequestContext<'_>) -> Result<String, S
     match source {
         "method" => Ok(request.method.to_string()),
         "path" => Ok(request.path.to_string()),
-        "provider.id" => Ok(request.provider.id.clone()),
-        "provider.name" => Ok(request.provider.name.clone()),
-        "route.id" => Ok(request.route.id.clone()),
+        "provider.id" => request
+            .provider
+            .map(|provider| provider.id.clone())
+            .ok_or_else(|| "provider.id is unavailable".to_string()),
+        "provider.name" => request
+            .provider
+            .map(|provider| provider.name.clone())
+            .ok_or_else(|| "provider.name is unavailable".to_string()),
+        "route.id" => request
+            .route
+            .map(|route| route.id.clone())
+            .ok_or_else(|| "route.id is unavailable".to_string()),
         "model.id" => request
             .model
             .map(|model| model.id.clone())
@@ -254,20 +276,23 @@ fn split_top_level<'a>(expression: &'a str, token: &str) -> Vec<&'a str> {
 
 pub fn render_template(template: &str, request: &RequestContext<'_>) -> Result<String, String> {
     let mut output = template.to_string();
-    for (needle, value) in [
-        ("${provider.id}", request.provider.id.clone()),
-        ("${provider.name}", request.provider.name.clone()),
-        ("${route.id}", request.route.id.clone()),
-        (
-            "${model.id}",
-            request
-                .model
-                .map(|model| model.id.clone())
-                .unwrap_or_default(),
-        ),
-    ] {
-        output = output.replace(needle, &value);
-    }
+
+    replace_optional_token(&mut output, "${provider.id}", request.provider.map(|provider| provider.id.as_str()))?;
+    replace_optional_token(
+        &mut output,
+        "${provider.name}",
+        request.provider.map(|provider| provider.name.as_str()),
+    )?;
+    replace_optional_token(
+        &mut output,
+        "${route.id}",
+        request.route.map(|route| route.id.as_str()),
+    )?;
+    replace_optional_token(
+        &mut output,
+        "${model.id}",
+        request.model.map(|model| model.id.as_str()),
+    )?;
 
     while let Some(start) = output.find("${request.header.") {
         let Some(end) = output[start..].find('}') else {
@@ -301,6 +326,18 @@ pub fn render_template(template: &str, request: &RequestContext<'_>) -> Result<S
     }
 
     Ok(output)
+}
+
+fn replace_optional_token(
+    output: &mut String,
+    token: &str,
+    value: Option<&str>,
+) -> Result<(), String> {
+    if output.contains(token) {
+        let value = value.ok_or_else(|| format!("template variable '{}' is unavailable", token))?;
+        *output = output.replace(token, value);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -340,9 +377,9 @@ mod tests {
             method: "POST",
             path: "/v1/chat/completions",
             headers: &headers,
-            provider: &provider,
+            provider: Some(&provider),
             model: Some(&model),
-            route: &route,
+            route: Some(&route),
         };
 
         assert!(evaluate_expression("method == \"POST\" && path.startsWith(\"/v1/\")", &request)
@@ -379,9 +416,9 @@ mod tests {
             method: "POST",
             path: "/v1/chat/completions",
             headers: &headers,
-            provider: &provider,
+            provider: Some(&provider),
             model: Some(&model),
-            route: &route,
+            route: Some(&route),
         };
 
         let rendered =
