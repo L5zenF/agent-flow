@@ -8,7 +8,7 @@ export function Card({
   return (
     <section
       className={cn(
-        "rounded-sm border border-steel/20 bg-paper/90 p-4 shadow-panel",
+        "rounded-lg border border-zinc-200 bg-white p-4 shadow-sm",
         className,
       )}
     >

@@ -4,7 +4,6 @@ import {
   CircleOff,
   RefreshCw,
   Save,
-  ShieldEllipsis,
   TestTubeDiagonal,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -85,45 +84,31 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(198,93,22,0.16),_transparent_26%),linear-gradient(180deg,_#f5efe3_0%,_#e7decd_100%)] text-ink">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 lg:px-8">
-        <header className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
-          <Card className="overflow-hidden border-ink bg-ink text-paper">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-3">
-                <Badge className="border-paper/20 bg-paper/10 text-paper">
-                  practical admin panel
-                </Badge>
-                <div>
-                  <h1 className="font-mono text-3xl uppercase tracking-[0.18em]">
-                    LLM Gateway
-                  </h1>
-                  <p className="mt-2 max-w-2xl text-sm text-paper/72">
-                    Generic request gateway for providers, models, route matching,
-                    path rewrite, and header injection. No body adaptation.
-                  </p>
-                </div>
-              </div>
-              <ShieldEllipsis className="h-10 w-10 text-ember" />
-            </div>
-          </Card>
-          <Card className="border-steel/25 bg-white/70">
-            <div className="space-y-4">
+    <div className="min-h-screen bg-zinc-50 text-zinc-900">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 lg:px-8">
+        <header className="space-y-4">
+          <div className="flex flex-col gap-3 border-b border-zinc-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <Badge>admin/ui</Badge>
               <div>
-                <div className="font-mono text-xs uppercase tracking-[0.3em] text-steel">
-                  runtime
-                </div>
-                <div className="mt-2 grid gap-2 text-sm">
-                  <div>Gateway: {config.listen}</div>
-                  <div>Admin: {config.admin_listen}</div>
-                  <div>Secret Env: {config.default_secret_env || "<unset>"}</div>
-                </div>
-              </div>
-              <div className="rounded-sm border border-steel/20 bg-paper/50 p-3 text-sm">
-                {status}
+                <h1 className="font-mono text-2xl font-semibold tracking-tight">
+                  LLM Gateway
+                </h1>
+                <p className="mt-1 max-w-2xl text-sm text-zinc-600">
+                  Generic gateway for request routing, path rewrite, and header mutation.
+                  No protocol adaptation. No body rewriting.
+                </p>
               </div>
             </div>
-          </Card>
+            <div className="grid gap-1 text-sm text-zinc-600">
+              <div>Gateway: {config.listen}</div>
+              <div>Admin: {config.admin_listen}</div>
+              <div>Secret Env: {config.default_secret_env || "<unset>"}</div>
+            </div>
+          </div>
+          <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
+            {status}
+          </div>
         </header>
 
         <div className="flex flex-wrap gap-2">
@@ -145,17 +130,17 @@ export default function App() {
           </Button>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <Card className="h-fit border-steel/20 bg-white/60 p-2">
+        <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <Card className="h-fit p-2">
             <nav className="space-y-1">
               {tabs.map((item) => (
                 <button
                   key={item.key}
                   onClick={() => setTab(item.key)}
-                  className={`flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-sm ${
+                  className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition ${
                     tab === item.key
-                      ? "bg-ink text-paper"
-                      : "text-steel hover:bg-white/60 hover:text-ink"
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
                   }`}
                 >
                   {item.label}
@@ -186,7 +171,7 @@ export default function App() {
                 }
               >
                 {config.providers.map((provider, index) => (
-                  <Card key={provider.id} className="bg-white/70">
+                  <Card key={provider.id}>
                     <SectionActions
                       onRemove={() =>
                         setConfig((current) => ({
@@ -229,11 +214,11 @@ export default function App() {
                     </div>
                     <div className="mt-4 space-y-3">
                       <div className="flex items-center justify-between">
-                        <div className="font-mono text-xs uppercase tracking-[0.24em] text-steel">
+                        <div className="font-mono text-xs uppercase tracking-[0.18em] text-zinc-500">
                           default headers
                         </div>
                         <Button
-                          className="bg-white text-ink"
+                          className="bg-white text-zinc-900"
                           onClick={() =>
                             updateItem(config.providers, index, setConfig, "providers", {
                               ...provider,
@@ -296,8 +281,8 @@ export default function App() {
                             <Button
                               className={`flex-1 ${
                                 "encrypted" in header.value && header.value.encrypted
-                                  ? "bg-ember text-white"
-                                  : "bg-white text-ink"
+                                  ? "border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800"
+                                  : "bg-white text-zinc-900"
                               }`}
                               onClick={() => {
                                 const next = [...provider.default_headers];
@@ -321,7 +306,7 @@ export default function App() {
                                 : "Plain"}
                             </Button>
                             <Button
-                              className="bg-white text-ink"
+                              className="bg-white text-zinc-900"
                               onClick={() => {
                                 const next = provider.default_headers.filter((_, item) => item !== headerIndex);
                                 updateItem(config.providers, index, setConfig, "providers", {
@@ -529,7 +514,7 @@ export default function App() {
                 }
               >
                 {config.header_rules.map((rule, index) => (
-                  <Card key={rule.id} className="bg-white/70">
+                  <Card key={rule.id}>
                     <SectionActions
                       onRemove={() =>
                         setConfig((current) => ({
@@ -594,11 +579,11 @@ export default function App() {
                     </div>
                     <div className="mt-4 space-y-3">
                       <div className="flex items-center justify-between">
-                        <div className="font-mono text-xs uppercase tracking-[0.24em] text-steel">
+                        <div className="font-mono text-xs uppercase tracking-[0.18em] text-zinc-500">
                           actions
                         </div>
                         <Button
-                          className="bg-white text-ink"
+                          className="bg-white text-zinc-900"
                           onClick={() => {
                             updateItem(config.header_rules, index, setConfig, "header_rules", {
                               ...rule,
@@ -643,7 +628,7 @@ export default function App() {
                 onAdd={() => undefined}
                 hideAdd
               >
-                <pre className="overflow-x-auto rounded-sm border border-steel/20 bg-ink p-4 font-mono text-xs text-paper">
+                <pre className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-950 p-4 font-mono text-xs text-zinc-100">
                   {JSON.stringify(config, null, 2)}
                 </pre>
               </ResourceCard>
@@ -680,13 +665,13 @@ function ResourceCard({
   hideAdd?: boolean;
 }>) {
   return (
-    <Card className="space-y-4 border-ink/10 bg-white/55">
+    <Card className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="font-mono text-xs uppercase tracking-[0.28em] text-steel">
+          <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
             {title}
           </div>
-          <p className="mt-2 max-w-2xl text-sm text-steel">{description}</p>
+          <p className="mt-1 max-w-2xl text-sm text-zinc-600">{description}</p>
         </div>
         {!hideAdd && (
           <Button onClick={onAdd} className="shrink-0">
@@ -705,7 +690,7 @@ function EditorRow({
   children,
 }: React.PropsWithChildren<{ title: string; onRemove: () => void }>) {
   return (
-    <Card className="bg-white/70">
+    <Card>
       <SectionActions onRemove={onRemove} title={title} />
       <div className="grid gap-3 md:grid-cols-2">{children}</div>
     </Card>
@@ -722,13 +707,13 @@ function SectionActions({
   return (
     <div className="mb-4 flex items-center justify-between gap-3">
       {title ? (
-        <div className="font-mono text-xs uppercase tracking-[0.24em] text-steel">
+        <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
           {title}
         </div>
       ) : (
         <div />
       )}
-      <Button onClick={onRemove} className="bg-white text-ink">
+      <Button onClick={onRemove} className="bg-white text-zinc-900">
         <CircleOff className="mr-2 h-4 w-4" />
         Remove
       </Button>
@@ -738,7 +723,7 @@ function SectionActions({
 
 function Label({ children }: React.PropsWithChildren) {
   return (
-    <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.24em] text-steel">
+    <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
       {children}
     </div>
   );
@@ -771,7 +756,7 @@ function ActionEditor({
   onRemove: () => void;
 }) {
   return (
-    <div className="rounded-sm border border-steel/20 bg-paper/60 p-3">
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
       <div className="grid gap-3 md:grid-cols-4">
         <Field
           label="Type"
@@ -817,7 +802,7 @@ function ActionEditor({
           />
         )}
         <div className="flex items-end">
-          <Button onClick={onRemove} className="w-full bg-white text-ink">
+          <Button onClick={onRemove} className="w-full bg-white text-zinc-900">
             Remove
           </Button>
         </div>
