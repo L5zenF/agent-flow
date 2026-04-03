@@ -13,11 +13,22 @@ import {
   type Connection,
   type Edge,
   type EdgeChange,
+  type IsValidConnection,
   type Node,
   type NodeChange,
   type NodeProps,
 } from "reactflow";
-import { AlertTriangle, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  Flag,
+  GitBranch,
+  Network,
+  Plus,
+  Route,
+  Tag,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -110,6 +121,10 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
   );
 
   const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const isValidConnection = useMemo<IsValidConnection>(
+    () => (connection) => validateConnectionLike(connection, graph),
+    [graph],
+  );
 
   return (
     <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_340px]">
@@ -179,9 +194,13 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
             updateGraph(setConfig, { ...graph, edges: nextEdges });
           }}
           onConnect={(connection) => {
+            if (!validateConnectionLike(connection, graph)) {
+              return;
+            }
             const nextEdges = addGraphEdge(graph.edges, connection);
             updateGraph(setConfig, { ...graph, edges: nextEdges });
           }}
+          isValidConnection={isValidConnection}
           onNodeClick={(_, node) => setSelectedNodeId(node.id)}
         >
           <Background gap={20} size={1} color="#e4e4e7" />
@@ -514,7 +533,8 @@ function NodeInspector({
 function FlowStartNode({ data, selected }: NodeProps<FlowNodeData>) {
   return (
     <div className={nodeClassName(data, selected, true)}>
-      <div className="font-medium">{data.title}</div>
+      <NodePill icon={<Flag className="h-3.5 w-3.5" />} label="Start" />
+      <div className="mt-2 font-medium">{data.title}</div>
       <div className="mt-1 text-[11px] text-zinc-500">{data.subtitle}</div>
       <Handle type="source" position={Position.Right} />
     </div>
@@ -525,7 +545,8 @@ function FlowEndNode({ data, selected }: NodeProps<FlowNodeData>) {
   return (
     <div className={nodeClassName(data, selected, true)}>
       <Handle type="target" position={Position.Left} />
-      <div className="font-medium">{data.title}</div>
+      <NodePill icon={<Flag className="h-3.5 w-3.5" />} label="End" />
+      <div className="mt-2 font-medium">{data.title}</div>
       <div className="mt-1 text-[11px] text-zinc-500">{data.subtitle}</div>
     </div>
   );
@@ -535,7 +556,8 @@ function FlowActionNode({ data, selected }: NodeProps<FlowNodeData>) {
   return (
     <div className={nodeClassName(data, selected, true)}>
       <Handle type="target" position={Position.Left} />
-      <div className="font-medium">{data.title}</div>
+      <NodePill icon={iconForActionTitle(data.title)} label="Action" />
+      <div className="mt-2 font-medium">{data.title}</div>
       <div className="mt-1 text-[11px] text-zinc-500">{data.subtitle}</div>
       <Handle type="source" position={Position.Right} />
     </div>
@@ -546,7 +568,8 @@ function FlowConditionNode({ data, selected }: NodeProps<FlowNodeData>) {
   return (
     <div className={nodeClassName(data, selected, false)}>
       <Handle type="target" position={Position.Left} />
-      <div className="font-medium">{data.title}</div>
+      <NodePill icon={<GitBranch className="h-3.5 w-3.5" />} label="Condition" />
+      <div className="mt-2 font-medium">{data.title}</div>
       <div className="mt-1 text-[11px] text-zinc-500">{data.subtitle}</div>
       <div className="mt-3 flex justify-between text-[10px] uppercase tracking-[0.12em] text-zinc-500">
         <span>True</span>
@@ -570,6 +593,40 @@ function nodeClassName(data: FlowNodeData, selected: boolean, compact: boolean) 
   ]
     .join(" ")
     .trim();
+}
+
+function NodePill({
+  icon,
+  label,
+}: {
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+      {icon}
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function iconForActionTitle(title: string) {
+  if (title.startsWith("Set ")) {
+    return <Tag className="h-3.5 w-3.5" />;
+  }
+  if (title.startsWith("Remove ")) {
+    return <Trash2 className="h-3.5 w-3.5" />;
+  }
+  if (title.startsWith("Copy ")) {
+    return <ArrowRightLeft className="h-3.5 w-3.5" />;
+  }
+  if (title.startsWith("Rewrite")) {
+    return <Route className="h-3.5 w-3.5" />;
+  }
+  if (title === "Select Model") {
+    return <Network className="h-3.5 w-3.5" />;
+  }
+  return <Route className="h-3.5 w-3.5" />;
 }
 
 function titleForNode(node: RuleGraphNode) {
@@ -719,6 +776,96 @@ function addGraphEdge(edges: RuleGraphConfig["edges"], connection: Connection) {
     target: edge.target,
     source_handle: edge.sourceHandle ?? null,
   }));
+}
+
+function validateConnectionLike(
+  connection: {
+    source?: string | null;
+    target?: string | null;
+    sourceHandle?: string | null | undefined;
+  },
+  graph: RuleGraphConfig,
+) {
+  if (!connection.source || !connection.target) {
+    return false;
+  }
+  if (connection.source === connection.target) {
+    return false;
+  }
+
+  const sourceNode = graph.nodes.find((node) => node.id === connection.source);
+  const targetNode = graph.nodes.find((node) => node.id === connection.target);
+  if (!sourceNode || !targetNode) {
+    return false;
+  }
+
+  if (targetNode.type === "start") {
+    return false;
+  }
+  if (sourceNode.type === "end") {
+    return false;
+  }
+
+  if (
+    graph.edges.some(
+      (edge) =>
+        edge.source === connection.source &&
+        edge.target === connection.target &&
+        (edge.source_handle ?? null) === (connection.sourceHandle ?? null),
+    )
+  ) {
+    return false;
+  }
+
+  if (sourceNode.type === "condition") {
+    const handle = connection.sourceHandle ?? "";
+    if (handle !== "true" && handle !== "false") {
+      return false;
+    }
+    if (
+      graph.edges.some(
+        (edge) =>
+          edge.source === connection.source &&
+          (edge.source_handle ?? null) === (connection.sourceHandle ?? null),
+      )
+    ) {
+      return false;
+    }
+  } else {
+    if (connection.sourceHandle) {
+      return false;
+    }
+    if (graph.edges.some((edge) => edge.source === connection.source)) {
+      return false;
+    }
+  }
+
+  if (createsCycle(graph, connection.source, connection.target)) {
+    return false;
+  }
+
+  return true;
+}
+
+function createsCycle(graph: RuleGraphConfig, source: string, target: string) {
+  const stack = [target];
+  const visited = new Set<string>();
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current === source) {
+      return true;
+    }
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+    for (const edge of graph.edges.filter((item) => item.source === current)) {
+      stack.push(edge.target);
+    }
+  }
+
+  return false;
 }
 
 function flowTypeForNode(type: RuleGraphNodeType) {
