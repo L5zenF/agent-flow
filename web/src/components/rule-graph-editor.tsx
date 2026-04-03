@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   addEdge,
   applyEdgeChanges,
@@ -17,6 +17,7 @@ import {
   type Node,
   type NodeChange,
   type NodeProps,
+  type ReactFlowInstance,
 } from "reactflow";
 import {
   AlertTriangle,
@@ -85,6 +86,8 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
   const graph = config.rule_graph ?? emptyConfig().rule_graph!;
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph.start_node_id);
   const validation = useMemo(() => validateGraph(graph, config), [graph, config]);
+  const flowWrapperRef = useRef<HTMLDivElement | null>(null);
+  const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
 
   const nodes = useMemo<Node<FlowNodeData>[]>(
     () =>
@@ -126,6 +129,21 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
     [graph],
   );
 
+  const addNode = useCallback(
+    (type: RuleGraphNodeType, position?: { x: number; y: number }) => {
+      const next = createNode(type, graph.nodes.length);
+      if (position) {
+        next.position = position;
+      }
+      updateGraph(setConfig, {
+        ...graph,
+        nodes: [...graph.nodes, next],
+      });
+      setSelectedNodeId(next.id);
+    },
+    [graph, setConfig],
+  );
+
   return (
     <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_340px]">
       <div className="space-y-4">
@@ -138,14 +156,12 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
               <button
                 key={item.type}
                 type="button"
-                onClick={() => {
-                  const next = createNode(item.type, graph.nodes.length);
-                  updateGraph(setConfig, {
-                    ...graph,
-                    nodes: [...graph.nodes, next],
-                  });
-                  setSelectedNodeId(next.id);
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/x-rule-graph-node", item.type);
+                  event.dataTransfer.effectAllowed = "move";
                 }}
+                onClick={() => addNode(item.type)}
                 className="flex w-full items-center justify-between rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 transition hover:border-zinc-300 hover:bg-white"
               >
                 {item.label}
@@ -180,11 +196,34 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
       </div>
 
       <Card className="h-[720px] overflow-hidden p-0">
+        <div
+          ref={flowWrapperRef}
+          className="h-full w-full"
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const type = event.dataTransfer.getData("application/x-rule-graph-node") as RuleGraphNodeType;
+            if (!type || !flowInstanceRef.current || !flowWrapperRef.current) {
+              return;
+            }
+            const position = flowInstanceRef.current.screenToFlowPosition({
+              x: event.clientX,
+              y: event.clientY,
+            });
+            addNode(type, position);
+          }}
+        >
         <ReactFlow
           nodes={nodes}
           edges={edges}
           fitView
           nodeTypes={nodeTypes}
+          onInit={(instance) => {
+            flowInstanceRef.current = instance;
+          }}
           onNodesChange={(changes) => {
             const nextNodes = applyVisualNodeChanges(graph.nodes, changes);
             updateGraph(setConfig, { ...graph, nodes: nextNodes });
@@ -207,6 +246,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
           <MiniMap pannable zoomable />
           <Controls />
         </ReactFlow>
+        </div>
       </Card>
 
       <Card className="h-fit">
