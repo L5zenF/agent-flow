@@ -1,0 +1,43 @@
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+default_secret_env = "PROXY_SECRET"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[[providers.default_headers]]
+name = "Authorization"
+value = "Bearer replace-me"
+
+[[providers.default_headers]]
+name = "User-Agent"
+value = "proxy-tools/0.1"
+
+[[models]]
+id = "kimi-k2"
+name = "Kimi K2"
+provider_id = "kimi"
+description = "Default Kimi model route"
+
+[[routes]]
+id = "chat-default"
+priority = 100
+enabled = true
+match = 'path.startsWith("/v1/chat/completions") && method == "POST"'
+provider_id = "kimi"
+model_id = "kimi-k2"
+path_rewrite = "/coding/v1/chat/completions"
+
+[[header_rules]]
+id = "inject-model-header"
+enabled = true
+scope = "model"
+target_id = "kimi-k2"
+when = 'path.startsWith("/v1/")'
+
+[[header_rules.actions]]
+type = "set"
+name = "X-Model"
+value = "${model.id}"
