@@ -58,6 +58,19 @@ export type GatewayConfig = {
   header_rules: HeaderRuleConfig[];
 };
 
+export type GatewayConfigWire = Omit<GatewayConfig, "providers"> & {
+  providers: Array<
+    Omit<ProviderConfig, "default_headers"> & {
+      default_headers: Array<{
+        name: string;
+        value:
+          | string
+          | { value: string; encrypted?: boolean; secret_env?: string | null };
+      }>;
+    }
+  >;
+};
+
 export const emptyConfig = (): GatewayConfig => ({
   listen: "127.0.0.1:9001",
   admin_listen: "127.0.0.1:9002",
@@ -67,3 +80,23 @@ export const emptyConfig = (): GatewayConfig => ({
   routes: [],
   header_rules: [],
 });
+
+export function normalizeConfig(input: GatewayConfigWire): GatewayConfig {
+  return {
+    ...input,
+    providers: input.providers.map((provider) => ({
+      ...provider,
+      default_headers: provider.default_headers.map((header) => ({
+        name: header.name,
+        value:
+          typeof header.value === "string"
+            ? { value: header.value }
+            : {
+                value: header.value.value,
+                encrypted: Boolean(header.value.encrypted),
+                secret_env: header.value.secret_env ?? null,
+              },
+      })),
+    })),
+  };
+}
