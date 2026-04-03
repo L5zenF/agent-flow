@@ -25,7 +25,7 @@ description = "Default Kimi model route"
 id = "chat-default"
 priority = 100
 enabled = true
-match = 'path.startsWith("/v1/chat/completions") && method == "POST"'
+matcher = 'path.startsWith("/v1/chat/completions") && method == "POST"'
 provider_id = "kimi"
 model_id = "kimi-k2"
 path_rewrite = "/coding/v1/chat/completions"
@@ -49,82 +49,147 @@ start_node_id = "start"
 [[rule_graph.nodes]]
 id = "start"
 type = "start"
-position = { x = 80.0, y = 200.0 }
+
+[rule_graph.nodes.position]
+x = 69.41704752740952
+y = 116.84062377466648
 
 [[rule_graph.nodes]]
-id = "chat-condition"
-type = "condition"
-position = { x = 320.0, y = 200.0 }
+id = "note-8"
+type = "note"
 
-[rule_graph.nodes.condition]
-mode = "expression"
-expression = 'path.startsWith("/v1/chat/completions") && method == "POST"'
+[rule_graph.nodes.position]
+x = 394.6578566256336
+y = -392.2541636495293
 
-[[rule_graph.nodes]]
-id = "route-kimi"
-type = "route_provider"
-position = { x = 560.0, y = 120.0 }
-
-[rule_graph.nodes.route_provider]
-provider_id = "kimi"
+[rule_graph.nodes.note_node]
+text = "你好"
 
 [[rule_graph.nodes]]
-id = "select-k2"
+id = "log-9"
+type = "log"
+
+[rule_graph.nodes.position]
+x = 437.9100934097669
+y = -91.45242103892916
+
+[rule_graph.nodes.log]
+message = """
+route=${ctx.path}
+kimi"""
+
+[[rule_graph.nodes]]
+id = "router-4"
+type = "router"
+
+[rule_graph.nodes.position]
+x = 241.79208652385245
+y = 236.1072699684284
+
+[rule_graph.nodes.router]
+fallback_node_id = "log-6"
+
+[[rule_graph.nodes.router.rules]]
+id = "rule-1"
+target_node_id = "log-9"
+
+[[rule_graph.nodes.router.rules.clauses]]
+source = "ctx.path"
+operator = "=="
+value = "/v1/chat/completions"
+
+[[rule_graph.nodes.router.rules]]
+id = "rule-2"
+target_node_id = "log-5"
+
+[[rule_graph.nodes.router.rules.clauses]]
+source = "ctx.path"
+operator = "=="
+value = "/v2"
+
+[[rule_graph.nodes]]
+id = "log-5"
+type = "log"
+
+[rule_graph.nodes.position]
+x = 836.2772919406019
+y = 473.8869108193056
+
+[rule_graph.nodes.log]
+message = """
+rout=${ctx.path}
+v2"""
+
+[[rule_graph.nodes]]
+id = "log-6"
+type = "log"
+
+[rule_graph.nodes.position]
+x = 956.7798301524388
+y = 793.6456145782744
+
+[rule_graph.nodes.log]
+message = "啥都没"
+
+[[rule_graph.nodes]]
+id = "end-7"
+type = "end"
+
+[rule_graph.nodes.position]
+x = 1409.727843408957
+y = 516.1318991288113
+
+[[rule_graph.nodes]]
+id = "select_model-8"
 type = "select_model"
-position = { x = 800.0, y = 120.0 }
+
+[rule_graph.nodes.position]
+x = 778.1776771868708
+y = -46.66375075153991
 
 [rule_graph.nodes.select_model]
+provider_id = "kimi"
 model_id = "kimi-k2"
 
-[[rule_graph.nodes]]
-id = "rewrite-chat"
-type = "rewrite_path"
-position = { x = 1040.0, y = 120.0 }
-
-[rule_graph.nodes.rewrite_path]
-value = "/coding/v1/chat/completions"
-
-[[rule_graph.nodes]]
-id = "set-model-header"
-type = "set_header"
-position = { x = 1280.0, y = 120.0 }
-
-[rule_graph.nodes.set_header]
-name = "X-Model"
-value = "${model.id}"
-
-[[rule_graph.nodes]]
-id = "end"
-type = "end"
-position = { x = 1520.0, y = 120.0 }
-
 [[rule_graph.edges]]
-id = "e1"
+id = "start-next"
 source = "start"
-target = "chat-condition"
+target = "router-4"
 
 [[rule_graph.edges]]
-id = "e2"
-source = "chat-condition"
-source_handle = "true"
-target = "route-kimi"
+id = "router-4-router:rule-1"
+source = "router-4"
+target = "log-9"
+source_handle = "router:rule-1"
 
 [[rule_graph.edges]]
-id = "e3"
-source = "route-kimi"
-target = "select-k2"
+id = "router-4-router:rule-2"
+source = "router-4"
+target = "log-5"
+source_handle = "router:rule-2"
 
 [[rule_graph.edges]]
-id = "e4"
-source = "select-k2"
-target = "rewrite-chat"
+id = "router-4-router:fallback"
+source = "router-4"
+target = "log-6"
+source_handle = "router:fallback"
 
 [[rule_graph.edges]]
-id = "e5"
-source = "rewrite-chat"
-target = "set-model-header"
+id = "log-5-next"
+source = "log-5"
+target = "end-7"
 
 [[rule_graph.edges]]
-id = "e6"
-source = "set-model-header"
-target = "end"
+id = "log-6-next"
+source = "log-6"
+target = "end-7"
+
+[[rule_graph.edges]]
+id = "log-9-next"
+source = "log-9"
+target = "select_model-8"
+
+[[rule_graph.edges]]
+id = "select_model-8-next"
+source = "select_model-8"
+target = "end-7"
