@@ -129,6 +129,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
   const graph = config.rule_graph ?? emptyConfig().rule_graph!;
   const graphRef = useRef(graph);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph.start_node_id);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const validation = useMemo(() => validateGraph(graph, config), [graph, config]);
   const providerOptions = useMemo(
@@ -235,6 +236,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
         target: edge.target,
         type: "ruleEdge",
         sourceHandle: edge.source_handle ?? undefined,
+        selected: edge.id === selectedEdgeId,
         data: {
           label: edgeLabelForHandle(edge.source_handle ?? null),
           stroke:
@@ -249,7 +251,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
         markerEnd: { type: MarkerType.ArrowClosed },
         className: "rule-flow-edge",
       })),
-    [graph.edges, graph.nodes],
+    [graph.edges, graph.nodes, selectedEdgeId],
   );
 
   const addNode = (type: RuleGraphNodeType, position?: { x: number; y: number }) => {
@@ -292,6 +294,43 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
     };
   }, []);
 
+  useEffect(() => {
+    if (selectedEdgeId && !graph.edges.some((edge) => edge.id === selectedEdgeId)) {
+      setSelectedEdgeId(null);
+    }
+  }, [graph.edges, selectedEdgeId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!selectedEdgeId || (event.key !== "Delete" && event.key !== "Backspace")) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      const isEditable =
+        target?.isContentEditable ||
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select";
+      if (isEditable) {
+        return;
+      }
+
+      event.preventDefault();
+      updateGraph(setConfig, syncRouterTargetsWithEdges({
+        ...graphRef.current,
+        edges: graphRef.current.edges.filter((edge) => edge.id !== selectedEdgeId),
+      }));
+      setSelectedEdgeId(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [selectedEdgeId, setConfig]);
+
   const onNodesChange: OnNodesChange = (changes: NodeChange[]) => {
     setCanvasNodes((current) => applyNodeChanges(changes, current));
 
@@ -316,6 +355,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
     );
     if (selected) {
       setSelectedNodeId(selected.id);
+      setSelectedEdgeId(null);
     }
   };
 
@@ -365,6 +405,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
           );
 
     updateGraph(setConfig, nextGraph);
+    setSelectedEdgeId(null);
   };
 
   return (
@@ -391,6 +432,14 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
             addNode(type, flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
           }}
           onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+          onEdgeClick={(_, edge) => {
+            setSelectedNodeId(null);
+            setSelectedEdgeId(edge.id);
+          }}
+          onPaneClick={() => {
+            setSelectedNodeId(null);
+            setSelectedEdgeId(null);
+          }}
           onNodesChange={onNodesChange}
           onNodeDragStop={(_, node) => {
             canvasNodesRef.current = canvasNodesRef.current.map((item) =>
@@ -1214,6 +1263,7 @@ const RuleCanvasEdge = memo(function RuleCanvasEdge({
   targetPosition,
   markerEnd,
   data,
+  selected,
 }: EdgeProps<RuleCanvasEdgeData>) {
   const [path, labelX, labelY] = getBezierPath({
     sourceX,
@@ -1231,7 +1281,11 @@ const RuleCanvasEdge = memo(function RuleCanvasEdge({
         id={id}
         path={path}
         markerEnd={markerEnd}
-        style={{ stroke: data?.stroke ?? "#a1a1aa", strokeWidth: 1.75 }}
+        style={{
+          stroke: data?.stroke ?? "#a1a1aa",
+          strokeWidth: selected ? 3 : 1.75,
+          filter: selected ? "drop-shadow(0 0 8px rgba(15,23,42,0.18))" : undefined,
+        }}
       />
       {data?.label ? (
         <EdgeLabelRenderer>
