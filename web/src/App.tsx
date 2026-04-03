@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   CircleOff,
   Copy,
@@ -37,10 +38,26 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [dialogTab, setDialogTab] = useState<DialogTab>("basic");
+  const latestConfigRef = useRef(config);
+
+  latestConfigRef.current = config;
 
   useEffect(() => {
     void load();
   }, []);
+
+  async function flushPendingEditorState() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && typeof active.blur === "function") {
+      flushSync(() => {
+        active.blur();
+      });
+    }
+    window.dispatchEvent(new Event("rule-graph:flush"));
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => resolve(), 0);
+    });
+  }
 
   async function load() {
     setBusy(true);
@@ -58,7 +75,8 @@ export default function App() {
   async function validate() {
     setBusy(true);
     try {
-      await api.validateConfig(config);
+      await flushPendingEditorState();
+      await api.validateConfig(latestConfigRef.current);
       setStatus("Validation passed.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Validation failed.");
@@ -70,7 +88,8 @@ export default function App() {
   async function save() {
     setBusy(true);
     try {
-      await api.saveConfig(config);
+      await flushPendingEditorState();
+      await api.saveConfig(latestConfigRef.current);
       setStatus("Config saved.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Save failed.");
@@ -172,7 +191,7 @@ export default function App() {
         ) : tab === "rule_graph" ? (
           <SimpleResourceView
             title="Rule Graph"
-            description="Global visual rule graph. This becomes the primary route and header rule entrypoint."
+            description="Global React Flow canvas for visual routing, model selection, path rewrite, and header mutation."
           >
             <RuleGraphEditor config={config} setConfig={setConfig} />
           </SimpleResourceView>

@@ -28,3 +28,20 @@ textarea {
 ::selection {
   background: rgba(24, 24, 27, 0.14);
 }
+
+.react-flow__edge.rule-flow-edge path {
+  stroke: #0f172a;
+  stroke-width: 2;
+}
+
+.react-flow__edge-text {
+  fill: #334155;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+}
+
+.react-flow__minimap {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 14px;
+}

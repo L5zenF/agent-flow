@@ -36,23 +36,21 @@ pub async fn put_config(
     State(state): State<AdminState>,
     Json(candidate): Json<GatewayConfig>,
 ) -> impl IntoResponse {
-    match save_config_atomic(&state.config_path, &candidate)
-        .map_err(|error| error.to_string())
-        .and_then(|_| {
-            *state.config.blocking_write() = candidate;
-            Ok(())
-        }) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    match save_config_atomic(&state.config_path, &candidate).map_err(|error| error.to_string()) {
+        Ok(()) => {
+            *state.config.write().await = candidate;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
     }
 }
 
 pub async fn reload_config(State(state): State<AdminState>) -> impl IntoResponse {
-    match crate::config::load_config(&state.config_path) {
+    match crate::config::load_config(&state.config_path).map_err(|error| error.to_string()) {
         Ok(config) => {
-            *state.config.blocking_write() = config;
+            *state.config.write().await = config;
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
     }
 }
