@@ -138,9 +138,9 @@ export type GatewayConfigWire = Omit<GatewayConfig, "providers"> & {
     Omit<ProviderConfig, "default_headers"> & {
       default_headers: Array<{
         name: string;
-        value:
-          | string
-          | { value: string; encrypted?: boolean; secret_env?: string | null };
+        value: string;
+        encrypted?: boolean;
+        secret_env?: string | null;
       }>;
     }
   >;
@@ -181,13 +181,34 @@ export function normalizeConfig(input: GatewayConfigWire): GatewayConfig {
       default_headers: provider.default_headers.map((header) => ({
         name: header.name,
         value:
-          typeof header.value === "string"
-            ? { value: header.value }
+          header.encrypted
+            ? {
+                value: header.value,
+                encrypted: true,
+                secret_env: header.secret_env ?? null,
+              }
             : {
-                value: header.value.value,
-                encrypted: Boolean(header.value.encrypted),
-                secret_env: header.value.secret_env ?? null,
+                value: header.value,
               },
+      })),
+    })),
+  };
+}
+
+export function toWireConfig(input: GatewayConfig): GatewayConfigWire {
+  return {
+    ...input,
+    providers: input.providers.map((provider) => ({
+      ...provider,
+      default_headers: provider.default_headers.map((header) => ({
+        name: header.name,
+        value: header.value.value,
+        ...("encrypted" in header.value && header.value.encrypted
+          ? {
+              encrypted: true,
+              secret_env: header.value.secret_env ?? null,
+            }
+          : {}),
       })),
     })),
   };

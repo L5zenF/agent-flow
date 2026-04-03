@@ -12,7 +12,8 @@ pub async fn panel_asset(
     AxumPath(path): AxumPath<String>,
 ) -> Response {
     let requested = PathBuf::from(path);
-    serve_path(&dist_dir(), &requested, false)
+    let fallback_to_index = requested.extension().is_none();
+    serve_path(&dist_dir(), &requested, fallback_to_index)
 }
 
 fn dist_dir() -> PathBuf {

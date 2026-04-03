@@ -1,6 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   ArrowRightLeft,
   CopyPlus,
   GitBranch,
@@ -24,9 +23,9 @@ import ReactFlow, {
   MarkerType,
   MiniMap,
   Position,
+  type Node,
   type Edge,
   type EdgeChange,
-  type Node,
   type NodeChange,
   type NodeProps,
   type OnConnect,
@@ -85,10 +84,31 @@ const CONDITION_OPERATORS = ["==", "!=", "startsWith", "contains"];
 
 export function RuleGraphEditor({ config, setConfig }: Props) {
   const graph = config.rule_graph ?? emptyConfig().rule_graph!;
+  const graphRef = useRef(graph);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph.start_node_id);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const validation = useMemo(() => validateGraph(graph, config), [graph, config]);
   const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const validationIssueCount =
+    validation.globalIssues.length +
+    Object.values(validation.nodeIssues).reduce((count, issues) => count + issues.length, 0);
+  const validationBadgeTone =
+    validationIssueCount > 0
+      ? "border-rose-200 bg-rose-50 text-rose-700 shadow-[0_10px_30px_rgba(244,63,94,0.14)]"
+      : "border-emerald-200 bg-emerald-50 text-emerald-700";
+  const validationBadgeText =
+    validationIssueCount > 0
+      ? `${validationIssueCount} issue${validationIssueCount === 1 ? "" : "s"}`
+      : "Graph valid";
+  const validationBadgeTitle =
+    validationIssueCount > 0
+      ? [
+          ...validation.globalIssues,
+          ...Object.entries(validation.nodeIssues).flatMap(([nodeId, issues]) =>
+            issues.map((issue) => `${nodeId}: ${issue}`),
+          ),
+        ].join("\n")
+      : "Graph validation passed.";
 
   const flowNodes = useMemo<Array<Node<RuleCanvasNodeData>>>(() => graph.nodes.map((node) => ({
     id: node.id,
@@ -115,6 +135,10 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
   useEffect(() => {
     canvasNodesRef.current = canvasNodes;
   }, [canvasNodes]);
+
+  useEffect(() => {
+    graphRef.current = graph;
+  }, [graph]);
 
   const flowEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => ({
     id: edge.id,
@@ -149,10 +173,11 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
     const positions = new Map(
       canvasNodesRef.current.map((node) => [node.id, node.position] as const),
     );
+    const currentGraph = graphRef.current;
 
     updateGraph(setConfig, {
-      ...graph,
-      nodes: graph.nodes.map((node) => ({
+      ...currentGraph,
+      nodes: currentGraph.nodes.map((node) => ({
         ...node,
         position: positions.get(node.id) ?? node.position,
       })),
@@ -168,7 +193,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
     return () => {
       window.removeEventListener("rule-graph:flush", flushListener);
     };
-  });
+  }, []);
 
   const onNodesChange: OnNodesChange = (changes: NodeChange[]) => {
     setCanvasNodes((current) => applyNodeChanges(changes, current));
@@ -245,10 +270,10 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[72px_minmax(0,1fr)_360px]">
-      <div className="space-y-3">
-        <Card className="group overflow-visible p-2">
-          <div className="mb-2 px-1 pt-1 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+    <div className="grid gap-4 xl:grid-cols-[88px_minmax(0,1fr)_320px] xl:items-start">
+      <div className="hidden xl:block">
+        <div className="sticky top-4 w-[72px] overflow-visible p-1">
+          <div className="mb-2 px-1 pt-1 text-center font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-500">
             Tools
           </div>
           <div className="space-y-2">
@@ -263,7 +288,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
                   event.dataTransfer.setData("application/rule-node-type", item.type);
                   event.dataTransfer.effectAllowed = "move";
                 }}
-                className="relative flex h-12 w-full items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900"
+                className="group relative flex h-12 w-full items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900"
               >
                 <div className="flex flex-col items-center gap-1">
                   {iconForLibraryNode(item.type)}
@@ -277,38 +302,42 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
               </button>
             ))}
           </div>
-        </Card>
+        </div>
       </div>
 
-      <Card className="overflow-hidden p-0">
-        <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
-          <div>
-            <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Rule Canvas
+      <div className="min-w-0">
+        <div className="xl:hidden">
+          <div className="mb-3 overflow-visible p-1">
+            <div className="mb-2 px-1 pt-1 text-center font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-500">
+              Tools
             </div>
-            <div className="mt-1 text-sm text-zinc-600">
-              React Flow visual editor. Drag nodes, connect branches, edit details on the right.
-            </div>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
-            {validation.globalIssues.length === 0 ? (
-              <div className="flex items-center gap-2 text-emerald-700">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Valid
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-amber-700">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                {validation.globalIssues.length} issue{validation.globalIssues.length > 1 ? "s" : ""}
-              </div>
-            )}
-            <div>
-              {graph.nodes.length} nodes · {graph.edges.length} edges
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+              {NODE_LIBRARY.map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  draggable
+                  title={item.label}
+                  onClick={() => addNode(item.type)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("application/rule-node-type", item.type);
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
+                  className="group relative flex h-12 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900"
+                >
+                  <div className="flex flex-col items-center gap-1">
+                    {iconForLibraryNode(item.type)}
+                    <span className="font-mono text-[8px] uppercase tracking-[0.12em] text-zinc-500">
+                      {shortLabelForType(item.type)}
+                    </span>
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
         </div>
 
-        <div className="h-[720px] bg-[radial-gradient(circle_at_top,#fff_0%,#f5f5f4_48%,#f1f5f9_100%)]">
+        <div className="rule-graph-canvas h-[58vh] min-h-[420px] rounded-[20px] bg-[radial-gradient(circle_at_top,#fff_0%,#f7f7f5_46%,#eef2f7_100%)] xl:h-[calc(100dvh-9.5rem)] xl:min-h-0">
           <ReactFlow
             nodes={canvasNodes}
             edges={flowEdges}
@@ -366,15 +395,35 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
             />
             <Controls showInteractive={false} />
             <Background gap={20} size={1.2} color="rgba(15, 23, 42, 0.12)" />
-            <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-xl border border-zinc-200 bg-white/85 px-3 py-2 text-xs text-zinc-600 shadow-sm backdrop-blur">
-              Drag icons from the left rail onto the canvas.
+            <div className="pointer-events-none absolute left-4 top-4 z-10">
+              <div className="rounded-lg bg-white/80 px-2.5 py-1.5 text-xs text-zinc-600 backdrop-blur">
+                Drag nodes from the left rail onto the canvas.
+              </div>
+            </div>
+            <div className="pointer-events-auto absolute right-4 top-4 z-10" title={validationBadgeTitle}>
+              <div
+                className={[
+                  "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium backdrop-blur",
+                  validationBadgeTone,
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-black",
+                    validationIssueCount > 0 ? "bg-rose-600 text-white" : "bg-emerald-600 text-white",
+                  ].join(" ")}
+                >
+                  {validationIssueCount > 0 ? "!" : "✓"}
+                </span>
+                <span className="whitespace-nowrap">{validationBadgeText}</span>
+              </div>
             </div>
           </ReactFlow>
         </div>
-      </Card>
+      </div>
 
-      <Card className="p-4">
-        <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+      <div className="rule-graph-inspector overflow-auto rounded-[20px] bg-white/65 p-4 xl:sticky xl:top-4 xl:max-h-[calc(100dvh-9.5rem)]">
+        <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
           Node Properties
         </div>
         {!selectedNode ? (
@@ -394,7 +443,7 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
             }}
           />
         )}
-      </Card>
+      </div>
     </div>
   );
 }
@@ -926,7 +975,7 @@ function setEdgeTarget(
       !(
         edge.source === sourceId &&
         (edge.source_handle ?? null) === (sourceHandle ?? null)
-      ) && edge.target !== sourceId,
+      ),
   );
 
   if (!targetId) {

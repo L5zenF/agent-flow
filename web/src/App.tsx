@@ -1,43 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import {
-  CircleOff,
-  Copy,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Save,
-  TestTubeDiagonal,
-  X,
-} from "lucide-react";
+import { CircleOff, Plus, RefreshCw, Save, Settings2, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { emptyConfig, type GatewayConfig, type HeaderAction } from "@/lib/types";
+import { emptyConfig, type GatewayConfig } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RuleGraphEditor } from "@/components/rule-graph-editor";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-
-type TabKey = "providers" | "rule_graph" | "models" | "routes" | "rules" | "raw";
-type DialogTab = "basic" | "models" | "headers" | "routes" | "rules";
-
-const tabs: Array<{ key: TabKey; label: string }> = [
-  { key: "providers", label: "Providers" },
-  { key: "rule_graph", label: "Rule Graph" },
-  { key: "models", label: "Models" },
-  { key: "routes", label: "Routes" },
-  { key: "rules", label: "Rules" },
-  { key: "raw", label: "Raw" },
-];
 
 export default function App() {
-  const [tab, setTab] = useState<TabKey>("providers");
   const [config, setConfig] = useState<GatewayConfig>(emptyConfig);
   const [status, setStatus] = useState("Loading...");
   const [busy, setBusy] = useState(false);
-  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
-  const [dialogTab, setDialogTab] = useState<DialogTab>("basic");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const latestConfigRef = useRef(config);
 
   latestConfigRef.current = config;
@@ -72,19 +48,6 @@ export default function App() {
     }
   }
 
-  async function validate() {
-    setBusy(true);
-    try {
-      await flushPendingEditorState();
-      await api.validateConfig(latestConfigRef.current);
-      setStatus("Validation passed.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Validation failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function save() {
     setBusy(true);
     try {
@@ -98,286 +61,197 @@ export default function App() {
     }
   }
 
-  async function reload() {
-    setBusy(true);
-    try {
-      await api.reloadConfig();
-      await load();
-      setStatus("Config reloaded from disk.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Reload failed.");
-      setBusy(false);
-    }
+  function openSettings() {
+    setSettingsOpen(true);
   }
 
-  const editingProvider = useMemo(
-    () => config.providers.find((provider) => provider.id === editingProviderId) ?? null,
-    [config.providers, editingProviderId],
-  );
+  function closeSettings() {
+    setSettingsOpen(false);
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 lg:px-8">
-        <header className="space-y-4">
-          <div className="flex flex-col gap-4 border-b border-zinc-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-2">
+      <div className="flex min-h-screen flex-col">
+        <header className="border-b border-zinc-200/80 bg-white/75 px-4 py-3 backdrop-blur-md">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+            <div className="min-w-0">
               <Badge>gateway switch</Badge>
-              <div>
-                <h1 className="font-mono text-2xl font-semibold tracking-tight">
+              <div className="mt-2 min-w-0">
+                <h1 className="truncate font-mono text-xl font-semibold tracking-tight">
                   LLM Gateway
                 </h1>
-                <p className="mt-1 max-w-2xl text-sm text-zinc-600">
-                  Provider-first switcher. Main screen stays clean. Editing happens in a focused dialog.
+                <p className="mt-0.5 truncate text-sm text-zinc-500">
+                  Canvas-first admin shell for the rule graph workspace.
                 </p>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={load} disabled={busy} className="gap-2">
+            <div className="flex items-center gap-2">
+              <TopBarButton label="Settings" onClick={openSettings}>
+                <Settings2 className="h-4 w-4" />
+              </TopBarButton>
+              <TopBarButton label="Load config" onClick={load} disabled={busy}>
                 <RefreshCw className="h-4 w-4" />
-                Load
-              </Button>
-              <Button onClick={validate} disabled={busy} className="gap-2">
-                <TestTubeDiagonal className="h-4 w-4" />
-                Validate
-              </Button>
-              <Button onClick={save} disabled={busy} className="gap-2">
+              </TopBarButton>
+              <TopBarButton label="Save config" onClick={save} disabled={busy}>
                 <Save className="h-4 w-4" />
-                Save
-              </Button>
-              <Button onClick={reload} disabled={busy}>
-                Reload
-              </Button>
+              </TopBarButton>
             </div>
           </div>
-
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap gap-2">
-              {tabs.map((item) => (
-                <button
-                  key={item.key}
-                  onClick={() => setTab(item.key)}
-                  className={`rounded-full border px-4 py-2 text-sm transition ${
-                    tab === item.key
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
+          <div className="mx-auto mt-2 flex max-w-7xl items-center justify-start">
+            <div className={`status-chip ${busy ? "status-chip-busy" : ""}`}>
+              <span className={`status-dot ${busy ? "status-dot-busy" : ""}`} />
+              <span className="min-w-0 truncate">{status}</span>
             </div>
-
-            <div className="grid gap-1 text-sm text-zinc-500 lg:text-right">
-              <div>Gateway: {config.listen}</div>
-              <div>Admin: {config.admin_listen}</div>
-              <div>Secret Env: {config.default_secret_env || "<unset>"}</div>
-            </div>
-          </div>
-
-          <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
-            {status}
           </div>
         </header>
 
-        {tab === "providers" ? (
-          <ProvidersView
-            config={config}
-            setConfig={setConfig}
-            onEditProvider={(providerId, nextTab = "basic") => {
-              setEditingProviderId(providerId);
-              setDialogTab(nextTab);
-            }}
-          />
-        ) : tab === "rule_graph" ? (
-          <SimpleResourceView
-            title="Rule Graph"
-            description="Global React Flow canvas for visual routing, model selection, path rewrite, and header mutation."
-          >
-            <RuleGraphEditor config={config} setConfig={setConfig} />
-          </SimpleResourceView>
-        ) : tab === "models" ? (
-          <SimpleResourceView title="Models" description="Direct list view for models.">
-            {config.models.map((model, index) => (
-              <EditorRow
-                key={model.id}
-                title={model.id}
-                onRemove={() =>
-                  setConfig((current) => ({
-                    ...current,
-                    models: current.models.filter((_, item) => item !== index),
-                  }))
-                }
-              >
-                <Field
-                  label="ID"
-                  value={model.id}
-                  onChange={(value) =>
-                    updateItem(config.models, index, setConfig, "models", { ...model, id: value })
-                  }
-                />
-                <Field
-                  label="Name"
-                  value={model.name}
-                  onChange={(value) =>
-                    updateItem(config.models, index, setConfig, "models", { ...model, name: value })
-                  }
-                />
-                <Field
-                  label="Provider ID"
-                  value={model.provider_id}
-                  onChange={(value) =>
-                    updateItem(config.models, index, setConfig, "models", {
-                      ...model,
-                      provider_id: value,
-                    })
-                  }
-                />
-              </EditorRow>
-            ))}
-          </SimpleResourceView>
-        ) : tab === "routes" ? (
-          <SimpleResourceView title="Routes" description="Direct list view for routes.">
-            {config.routes.map((route, index) => (
-              <EditorRow
-                key={route.id}
-                title={route.id}
-                onRemove={() =>
-                  setConfig((current) => ({
-                    ...current,
-                    routes: current.routes.filter((_, item) => item !== index),
-                  }))
-                }
-              >
-                <Field
-                  label="ID"
-                  value={route.id}
-                  onChange={(value) =>
-                    updateItem(config.routes, index, setConfig, "routes", { ...route, id: value })
-                  }
-                />
-                <Field
-                  label="Provider ID"
-                  value={route.provider_id}
-                  onChange={(value) =>
-                    updateItem(config.routes, index, setConfig, "routes", {
-                      ...route,
-                      provider_id: value,
-                    })
-                  }
-                />
-                <div className="md:col-span-2">
-                  <Label>Match Expression</Label>
-                  <Textarea
-                    value={route.matcher}
-                    onChange={(event) =>
-                      updateItem(config.routes, index, setConfig, "routes", {
-                        ...route,
-                        matcher: event.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </EditorRow>
-            ))}
-          </SimpleResourceView>
-        ) : tab === "rules" ? (
-          <SimpleResourceView title="Rules" description="Direct list view for rules.">
-            {config.header_rules.map((rule, index) => (
-              <EditorRow
-                key={rule.id}
-                title={rule.id}
-                onRemove={() =>
-                  setConfig((current) => ({
-                    ...current,
-                    header_rules: current.header_rules.filter((_, item) => item !== index),
-                  }))
-                }
-              >
-                <Field
-                  label="Scope"
-                  value={rule.scope}
-                  onChange={(value) =>
-                    updateItem(config.header_rules, index, setConfig, "header_rules", {
-                      ...rule,
-                      scope: value as typeof rule.scope,
-                    })
-                  }
-                />
-                <Field
-                  label="Target ID"
-                  value={rule.target_id ?? ""}
-                  onChange={(value) =>
-                    updateItem(config.header_rules, index, setConfig, "header_rules", {
-                      ...rule,
-                      target_id: value,
-                    })
-                  }
-                />
-              </EditorRow>
-            ))}
-          </SimpleResourceView>
-        ) : (
-          <Card>
-            <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Raw Config
-            </div>
-            <pre className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-950 p-4 font-mono text-xs text-zinc-100">
-              {JSON.stringify(config, null, 2)}
-            </pre>
-          </Card>
-        )}
-      </div>
+        <main className="flex-1 px-3 pb-3 pt-2 lg:px-4">
+          <RuleGraphEditor config={config} setConfig={setConfig} />
+        </main>
 
-      {editingProvider && (
-        <ProviderDialog
-          provider={editingProvider}
-          dialogTab={dialogTab}
-          setDialogTab={setDialogTab}
+        <SettingsModal
           config={config}
+          open={settingsOpen}
           setConfig={setConfig}
-          onClose={() => setEditingProviderId(null)}
+          onClose={closeSettings}
         />
-      )}
+      </div>
     </div>
   );
 }
 
-function ProvidersView({
+function SettingsModal({
+  config,
+  open,
+  setConfig,
+  onClose,
+}: {
+  config: GatewayConfig;
+  open: boolean;
+  setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 p-4">
+      <div className="max-h-[85vh] w-full max-w-4xl overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4 sm:px-6">
+          <div>
+            <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+              Settings
+            </div>
+            <div className="mt-1 text-lg font-semibold text-zinc-900">
+              Gateway configuration
+            </div>
+            <p className="mt-1 text-sm text-zinc-500">
+              Global config, providers, and models share the same live config state.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(85vh-88px)] space-y-5 overflow-y-auto px-5 py-5 sm:px-6">
+          <SettingsSection
+            title="Global config"
+            description="These values feed the same config object used by the canvas editor and save flow."
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field
+                label="Listen"
+                value={config.listen}
+                onChange={(value) => setConfig((current) => ({ ...current, listen: value }))}
+              />
+              <Field
+                label="Admin Listen"
+                value={config.admin_listen}
+                onChange={(value) => setConfig((current) => ({ ...current, admin_listen: value }))}
+              />
+              <div className="md:col-span-2">
+                <Field
+                  label="Default Secret Env"
+                  value={config.default_secret_env ?? ""}
+                  onChange={(value) =>
+                    setConfig((current) => ({
+                      ...current,
+                      default_secret_env: value || null,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          </SettingsSection>
+
+          <SettingsSection
+            title="Providers"
+            description="Manage upstream providers and their default headers without leaving the canvas shell."
+          >
+            <ProvidersSection config={config} setConfig={setConfig} />
+          </SettingsSection>
+
+          <SettingsSection
+            title="Models"
+            description="Attach models to providers using the shared config state consumed by the graph inspector."
+          >
+            <ModelsSection config={config} setConfig={setConfig} />
+          </SettingsSection>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsSection({
+  title,
+  description,
+  children,
+}: React.PropsWithChildren<{ title: string; description: string }>) {
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-4 sm:p-5">
+      <div className="mb-4">
+        <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+          {title}
+        </div>
+        <p className="mt-1 text-sm text-zinc-600">{description}</p>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
+function ProvidersSection({
   config,
   setConfig,
-  onEditProvider,
 }: {
   config: GatewayConfig;
   setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
-  onEditProvider: (providerId: string, nextTab?: DialogTab) => void;
 }) {
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-            Providers
-          </div>
-          <p className="mt-1 text-sm text-zinc-600">
-            Main view stays card-only. Click settings to open a focused provider dialog.
-          </p>
-        </div>
+    <div className="space-y-4">
+      <div className="flex justify-end">
         <Button
           className="gap-2"
           onClick={() =>
-            setConfig((current) => {
-              const nextProvider = {
-                id: `provider-${current.providers.length + 1}`,
-                name: "New Provider",
-                base_url: "https://example.com",
-                default_headers: [],
-              };
-              onEditProvider(nextProvider.id, "basic");
-              return {
-                ...current,
-                providers: [...current.providers, nextProvider],
-              };
-            })
+            setConfig((current) => ({
+              ...current,
+              providers: [
+                ...current.providers,
+                {
+                  id: `provider-${current.providers.length + 1}`,
+                  name: "New Provider",
+                  base_url: "https://example.com",
+                  default_headers: [],
+                },
+              ],
+            }))
           }
         >
           <Plus className="h-4 w-4" />
@@ -385,179 +259,24 @@ function ProvidersView({
         </Button>
       </div>
 
-      <div className="space-y-3">
-        {config.providers.map((provider, index) => {
-          const modelCount = config.models.filter((model) => model.provider_id === provider.id).length;
-          const routeCount = config.routes.filter((route) => route.provider_id === provider.id).length;
-          const ruleCount = config.header_rules.filter(
-            (rule) =>
-              (rule.scope === "provider" && rule.target_id === provider.id) ||
-              (rule.scope === "model" &&
-                config.models.some(
-                  (model) => model.provider_id === provider.id && model.id === rule.target_id,
-                )),
-          ).length;
+      {config.providers.length === 0 ? (
+        <EmptyMiniState text="No providers configured." />
+      ) : (
+        config.providers.map((provider, providerIndex) => (
+          <Card key={provider.id} className="rounded-2xl border border-zinc-200">
+            <SectionActions
+              title={provider.name || provider.id || `Provider ${providerIndex + 1}`}
+              onRemove={() =>
+                setConfig((current) => removeProviderFromConfig(current, providerIndex, provider.id))
+              }
+            />
 
-          return (
-            <Card key={provider.id} className="rounded-2xl border border-zinc-200 transition hover:border-zinc-300">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 font-mono text-sm font-semibold">
-                    {provider.name.slice(0, 1).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-base font-semibold">{provider.name}</div>
-                    <div className="truncate text-sm text-blue-600">{provider.base_url}</div>
-                  </div>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-2">
-                  <IconButton label="Edit" onClick={() => onEditProvider(provider.id, "basic")}>
-                    <Pencil className="h-4 w-4" />
-                  </IconButton>
-                  <IconButton
-                    label="Clone"
-                    onClick={() =>
-                      setConfig((current) => ({
-                        ...current,
-                        providers: [
-                          ...current.providers,
-                          {
-                            ...provider,
-                            id: `${provider.id}-copy`,
-                            name: `${provider.name} Copy`,
-                          },
-                        ],
-                      }))
-                    }
-                  >
-                    <Copy className="h-4 w-4" />
-                  </IconButton>
-                  <IconButton
-                    label="Delete"
-                    onClick={() =>
-                      setConfig((current) => ({
-                        ...current,
-                        providers: current.providers.filter((_, item) => item !== index),
-                      }))
-                    }
-                  >
-                    <CircleOff className="h-4 w-4" />
-                  </IconButton>
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <MetricPill>{modelCount} models</MetricPill>
-                <MetricPill>{routeCount} routes</MetricPill>
-                <MetricPill>{ruleCount} rules</MetricPill>
-                <MetricPill>{provider.default_headers.length} headers</MetricPill>
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <GhostAction onClick={() => onEditProvider(provider.id, "models")}>
-                  Models
-                </GhostAction>
-                <GhostAction onClick={() => onEditProvider(provider.id, "headers")}>
-                  Headers
-                </GhostAction>
-                <GhostAction onClick={() => onEditProvider(provider.id, "routes")}>
-                  Routes
-                </GhostAction>
-                <GhostAction onClick={() => onEditProvider(provider.id, "rules")}>
-                  Rules
-                </GhostAction>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ProviderDialog({
-  provider,
-  dialogTab,
-  setDialogTab,
-  config,
-  setConfig,
-  onClose,
-}: {
-  provider: GatewayConfig["providers"][number];
-  dialogTab: DialogTab;
-  setDialogTab: (value: DialogTab) => void;
-  config: GatewayConfig;
-  setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
-  onClose: () => void;
-}) {
-  const providerIndex = config.providers.findIndex((item) => item.id === provider.id);
-  const models = config.models.filter((model) => model.provider_id === provider.id);
-  const routes = config.routes.filter((route) => route.provider_id === provider.id);
-  const rules = config.header_rules.filter(
-    (rule) =>
-      (rule.scope === "provider" && rule.target_id === provider.id) ||
-      (rule.scope === "model" &&
-        config.models.some(
-          (model) => model.provider_id === provider.id && model.id === rule.target_id,
-        )),
-  );
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-6 py-4">
-          <div>
-            <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Provider Settings
-            </div>
-            <div className="mt-1 text-lg font-semibold">{provider.name}</div>
-            <div className="text-sm text-zinc-500">{provider.base_url}</div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md border border-zinc-200 p-2 text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="border-b border-zinc-200 px-6 py-3">
-          <div className="flex flex-wrap gap-2">
-            {([
-              ["basic", "Basic"],
-              ["models", "Models"],
-              ["headers", "Headers"],
-              ["routes", "Routes"],
-              ["rules", "Rules"],
-            ] as Array<[DialogTab, string]>).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setDialogTab(key)}
-                className={`rounded-full border px-3 py-1.5 text-sm transition ${
-                  dialogTab === key
-                    ? "border-zinc-900 bg-zinc-900 text-white"
-                    : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="max-h-[calc(90vh-140px)] overflow-y-auto px-6 py-5">
-          {dialogTab === "basic" && (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2">
               <Field
                 label="ID"
                 value={provider.id}
                 onChange={(value) =>
-                  updateItem(config.providers, providerIndex, setConfig, "providers", {
-                    ...provider,
-                    id: value,
-                  })
+                  setConfig((current) => renameProviderInConfig(current, providerIndex, provider.id, value))
                 }
               />
               <Field
@@ -583,74 +302,12 @@ function ProviderDialog({
                 />
               </div>
             </div>
-          )}
 
-          {dialogTab === "models" && (
-            <div className="space-y-3">
-              <div className="flex justify-end">
-                <Button
-                  onClick={() =>
-                    setConfig((current) => ({
-                      ...current,
-                      models: [
-                        ...current.models,
-                        {
-                          id: `${provider.id}-model-${models.length + 1}`,
-                          name: "New Model",
-                          provider_id: provider.id,
-                          description: "",
-                        },
-                      ],
-                    }))
-                  }
-                >
-                  Add Model
-                </Button>
-              </div>
-              {models.map((model) => {
-                const modelIndex = config.models.findIndex((item) => item.id === model.id);
-                return (
-                  <Card key={model.id}>
-                    <SectionActions
-                      title={model.id}
-                      onRemove={() =>
-                        setConfig((current) => ({
-                          ...current,
-                          models: current.models.filter((item) => item.id !== model.id),
-                        }))
-                      }
-                    />
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <Field
-                        label="Name"
-                        value={model.name}
-                        onChange={(value) =>
-                          updateItem(config.models, modelIndex, setConfig, "models", {
-                            ...model,
-                            name: value,
-                          })
-                        }
-                      />
-                      <Field
-                        label="Description"
-                        value={model.description ?? ""}
-                        onChange={(value) =>
-                          updateItem(config.models, modelIndex, setConfig, "models", {
-                            ...model,
-                            description: value,
-                          })
-                        }
-                      />
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-
-          {dialogTab === "headers" && (
-            <div className="space-y-3">
-              <div className="flex justify-end">
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                  Default headers
+                </div>
                 <Button
                   onClick={() =>
                     updateItem(config.providers, providerIndex, setConfig, "providers", {
@@ -665,383 +322,210 @@ function ProviderDialog({
                   Add Header
                 </Button>
               </div>
-              {provider.default_headers.map((header, headerIndex) => (
-                <Card key={`${provider.id}-${headerIndex}`}>
-                  <SectionActions
-                    title={header.name || `Header ${headerIndex + 1}`}
-                    onRemove={() => {
-                      const next = provider.default_headers.filter((_, item) => item !== headerIndex);
-                      updateItem(config.providers, providerIndex, setConfig, "providers", {
-                        ...provider,
-                        default_headers: next,
-                      });
-                    }}
-                  />
-                  <div className="grid gap-3">
-                    <Field
-                      label="Header"
-                      value={header.name}
-                      onChange={(value) => {
-                        const next = [...provider.default_headers];
-                        next[headerIndex] = { ...header, name: value };
+
+              {provider.default_headers.length === 0 ? (
+                <EmptyMiniState text="No default headers for this provider." />
+              ) : (
+                provider.default_headers.map((header, headerIndex) => (
+                  <Card key={`${provider.id}-${headerIndex}`} className="rounded-2xl border border-zinc-200">
+                    <SectionActions
+                      title={header.name || `Header ${headerIndex + 1}`}
+                      onRemove={() =>
                         updateItem(config.providers, providerIndex, setConfig, "providers", {
                           ...provider,
-                          default_headers: next,
-                        });
-                      }}
+                          default_headers: provider.default_headers.filter(
+                            (_, item) => item !== headerIndex,
+                          ),
+                        })
+                      }
                     />
-                    <Field
-                      label="Value"
-                      value={header.value.value}
-                      onChange={(value) => {
-                        const next = [...provider.default_headers];
-                        next[headerIndex] = { ...header, value: { ...header.value, value } };
-                        updateItem(config.providers, providerIndex, setConfig, "providers", {
-                          ...provider,
-                          default_headers: next,
-                        });
-                      }}
-                    />
-                    <Field
-                      label="Secret Env"
-                      value={"secret_env" in header.value ? header.value.secret_env ?? "" : ""}
-                      onChange={(value) => {
-                        const next = [...provider.default_headers];
-                        next[headerIndex] = {
-                          ...header,
-                          value: {
-                            value: header.value.value,
-                            encrypted: "encrypted" in header.value ? header.value.encrypted : false,
-                            secret_env: value || null,
-                          },
-                        };
-                        updateItem(config.providers, providerIndex, setConfig, "providers", {
-                          ...provider,
-                          default_headers: next,
-                        });
-                      }}
-                    />
-                    <div>
-                      <Label>Mode</Label>
-                      <div className="flex gap-2">
-                        <Button
-                          className={
-                            "encrypted" in header.value && header.value.encrypted
-                              ? "border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800"
-                              : ""
-                          }
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field
+                        label="Header"
+                        value={header.name}
+                        onChange={(value) => {
+                          const nextHeaders = [...provider.default_headers];
+                          nextHeaders[headerIndex] = { ...header, name: value };
+                          updateItem(config.providers, providerIndex, setConfig, "providers", {
+                            ...provider,
+                            default_headers: nextHeaders,
+                          });
+                        }}
+                      />
+                      <Field
+                        label="Value"
+                        value={header.value.value}
+                        onChange={(value) => {
+                          const nextHeaders = [...provider.default_headers];
+                          nextHeaders[headerIndex] = {
+                            ...header,
+                            value: { ...header.value, value },
+                          };
+                          updateItem(config.providers, providerIndex, setConfig, "providers", {
+                            ...provider,
+                            default_headers: nextHeaders,
+                          });
+                        }}
+                      />
+                      <Field
+                        label="Secret Env"
+                        value={"secret_env" in header.value ? header.value.secret_env ?? "" : ""}
+                        onChange={(value) => {
+                          const nextHeaders = [...provider.default_headers];
+                          nextHeaders[headerIndex] = {
+                            ...header,
+                            value: {
+                              value: header.value.value,
+                              encrypted: "encrypted" in header.value ? header.value.encrypted : false,
+                              secret_env: value || null,
+                            },
+                          };
+                          updateItem(config.providers, providerIndex, setConfig, "providers", {
+                            ...provider,
+                            default_headers: nextHeaders,
+                          });
+                        }}
+                      />
+                      <label>
+                        <Label>Encrypted</Label>
+                        <button
+                          type="button"
                           onClick={() => {
-                            const next = [...provider.default_headers];
-                            next[headerIndex] = {
+                            const nextHeaders = [...provider.default_headers];
+                            nextHeaders[headerIndex] = {
                               ...header,
                               value: {
                                 value: header.value.value,
-                                encrypted: !("encrypted" in header.value && header.value.encrypted),
+                                encrypted:
+                                  !("encrypted" in header.value && header.value.encrypted),
                                 secret_env:
                                   "secret_env" in header.value ? header.value.secret_env ?? null : null,
                               },
                             };
                             updateItem(config.providers, providerIndex, setConfig, "providers", {
                               ...provider,
-                              default_headers: next,
+                              default_headers: nextHeaders,
                             });
                           }}
+                          className={`inline-flex h-10 items-center rounded-md border px-3 text-sm transition ${
+                            "encrypted" in header.value && header.value.encrypted
+                              ? "border-zinc-900 bg-zinc-900 text-white"
+                              : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300"
+                          }`}
                         >
-                          {("encrypted" in header.value && header.value.encrypted)
-                            ? "Encrypted"
-                            : "Plain"}
-                        </Button>
-                      </div>
+                          {"encrypted" in header.value && header.value.encrypted ? "Yes" : "No"}
+                        </button>
+                      </label>
                     </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-
-          {dialogTab === "routes" && (
-            <div className="space-y-3">
-              <div className="flex justify-end">
-                <Button
-                  onClick={() =>
-                    setConfig((current) => ({
-                      ...current,
-                      routes: [
-                        ...current.routes,
-                        {
-                          id: `${provider.id}-route-${routes.length + 1}`,
-                          priority: 100,
-                          enabled: true,
-                          matcher: 'method == "POST"',
-                          provider_id: provider.id,
-                          model_id: models[0]?.id ?? "",
-                          path_rewrite: "",
-                        },
-                      ],
-                    }))
-                  }
-                >
-                  Add Route
-                </Button>
-              </div>
-              {routes.length === 0 ? (
-                <EmptyMiniState text="No routes bound to this provider." />
-              ) : (
-                routes.map((route) => {
-                  const routeIndex = config.routes.findIndex((item) => item.id === route.id);
-                  return (
-                    <Card key={route.id}>
-                      <SectionActions
-                        title={route.id}
-                        onRemove={() =>
-                          setConfig((current) => ({
-                            ...current,
-                            routes: current.routes.filter((item) => item.id !== route.id),
-                          }))
-                        }
-                      />
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <Field
-                          label="ID"
-                          value={route.id}
-                          onChange={(value) =>
-                            updateItem(config.routes, routeIndex, setConfig, "routes", {
-                              ...route,
-                              id: value,
-                            })
-                          }
-                        />
-                        <Field
-                          label="Priority"
-                          value={String(route.priority)}
-                          onChange={(value) =>
-                            updateItem(config.routes, routeIndex, setConfig, "routes", {
-                              ...route,
-                              priority: Number(value) || 0,
-                            })
-                          }
-                        />
-                        <Field
-                          label="Model ID"
-                          value={route.model_id ?? ""}
-                          onChange={(value) =>
-                            updateItem(config.routes, routeIndex, setConfig, "routes", {
-                              ...route,
-                              model_id: value,
-                            })
-                          }
-                        />
-                        <Field
-                          label="Path Rewrite"
-                          value={route.path_rewrite ?? ""}
-                          onChange={(value) =>
-                            updateItem(config.routes, routeIndex, setConfig, "routes", {
-                              ...route,
-                              path_rewrite: value,
-                            })
-                          }
-                        />
-                        <div className="md:col-span-2">
-                          <Label>Match Expression</Label>
-                          <Textarea
-                            value={route.matcher}
-                            onChange={(event) =>
-                              updateItem(config.routes, routeIndex, setConfig, "routes", {
-                                ...route,
-                                matcher: event.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                        <Field
-                          label="Enabled"
-                          value={String(route.enabled)}
-                          onChange={(value) =>
-                            updateItem(config.routes, routeIndex, setConfig, "routes", {
-                              ...route,
-                              enabled: value !== "false",
-                            })
-                          }
-                        />
-                      </div>
-                    </Card>
-                  );
-                })
+                  </Card>
+                ))
               )}
             </div>
-          )}
-
-          {dialogTab === "rules" && (
-            <div className="space-y-3">
-              <div className="flex justify-end">
-                <Button
-                  onClick={() =>
-                    setConfig((current) => ({
-                      ...current,
-                      header_rules: [
-                        ...current.header_rules,
-                        {
-                          id: `${provider.id}-rule-${rules.length + 1}`,
-                          enabled: true,
-                          scope: "provider",
-                          target_id: provider.id,
-                          when: "",
-                          actions: [{ type: "set", name: "X-Debug", value: "on" }],
-                        },
-                      ],
-                    }))
-                  }
-                >
-                  Add Rule
-                </Button>
-              </div>
-              {rules.length === 0 ? (
-                <EmptyMiniState text="No provider-related rules." />
-              ) : (
-                rules.map((rule) => {
-                  const ruleIndex = config.header_rules.findIndex((item) => item.id === rule.id);
-                  return (
-                    <Card key={rule.id}>
-                      <SectionActions
-                        title={rule.id}
-                        onRemove={() =>
-                          setConfig((current) => ({
-                            ...current,
-                            header_rules: current.header_rules.filter((item) => item.id !== rule.id),
-                          }))
-                        }
-                      />
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <Field
-                          label="ID"
-                          value={rule.id}
-                          onChange={(value) =>
-                            updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                              ...rule,
-                              id: value,
-                            })
-                          }
-                        />
-                        <Field
-                          label="Scope"
-                          value={rule.scope}
-                          onChange={(value) =>
-                            updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                              ...rule,
-                              scope: value as typeof rule.scope,
-                            })
-                          }
-                        />
-                        <Field
-                          label="Target ID"
-                          value={rule.target_id ?? ""}
-                          onChange={(value) =>
-                            updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                              ...rule,
-                              target_id: value,
-                            })
-                          }
-                        />
-                        <Field
-                          label="Enabled"
-                          value={String(rule.enabled)}
-                          onChange={(value) =>
-                            updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                              ...rule,
-                              enabled: value !== "false",
-                            })
-                          }
-                        />
-                        <div className="md:col-span-2">
-                          <Label>When</Label>
-                          <Textarea
-                            value={rule.when ?? ""}
-                            onChange={(event) =>
-                              updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                                ...rule,
-                                when: event.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                      </div>
-
-                      <div className="mt-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-                            Actions
-                          </div>
-                          <Button
-                            onClick={() => {
-                              updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                                ...rule,
-                                actions: [
-                                  ...rule.actions,
-                                  { type: "remove", name: "X-New-Header" },
-                                ],
-                              });
-                            }}
-                          >
-                            Add Action
-                          </Button>
-                        </div>
-                        {rule.actions.map((action, actionIndex) => (
-                          <RuleActionEditor
-                            key={`${rule.id}-${actionIndex}`}
-                            action={action}
-                            onChange={(nextAction) => {
-                              const nextActions = [...rule.actions];
-                              nextActions[actionIndex] = nextAction;
-                              updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                                ...rule,
-                                actions: nextActions,
-                              });
-                            }}
-                            onRemove={() => {
-                              const nextActions = rule.actions.filter((_, item) => item !== actionIndex);
-                              updateItem(config.header_rules, ruleIndex, setConfig, "header_rules", {
-                                ...rule,
-                                actions: nextActions,
-                              });
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </Card>
-                  );
-                })
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+          </Card>
+        ))
+      )}
     </div>
   );
 }
 
-function SimpleResourceView({
-  title,
-  description,
-  children,
-}: React.PropsWithChildren<{ title: string; description: string }>) {
+function ModelsSection({
+  config,
+  setConfig,
+}: {
+  config: GatewayConfig;
+  setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
+}) {
   return (
-    <Card>
-      <div className="mb-4">
-        <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-          {title}
-        </div>
-        <p className="mt-1 text-sm text-zinc-600">{description}</p>
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button
+          className="gap-2"
+          onClick={() =>
+            setConfig((current) => ({
+              ...current,
+              models: [
+                ...current.models,
+                {
+                  id: `model-${current.models.length + 1}`,
+                  name: "New Model",
+                  provider_id: current.providers[0]?.id ?? "",
+                  description: "",
+                },
+              ],
+            }))
+          }
+        >
+          <Plus className="h-4 w-4" />
+          Add Model
+        </Button>
       </div>
-      <div className="space-y-4">{children}</div>
-    </Card>
+
+      {config.models.length === 0 ? (
+        <EmptyMiniState text="No models configured." />
+      ) : (
+        config.models.map((model, modelIndex) => (
+          <Card key={model.id} className="rounded-2xl border border-zinc-200">
+            <SectionActions
+              title={model.name || model.id || `Model ${modelIndex + 1}`}
+              onRemove={() =>
+                setConfig((current) => removeModelFromConfig(current, modelIndex, model.id))
+              }
+            />
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field
+                label="ID"
+                value={model.id}
+                onChange={(value) =>
+                  setConfig((current) => renameModelInConfig(current, modelIndex, model.id, value))
+                }
+              />
+              <Field
+                label="Name"
+                value={model.name}
+                onChange={(value) =>
+                  updateItem(config.models, modelIndex, setConfig, "models", {
+                    ...model,
+                    name: value,
+                  })
+                }
+              />
+              <Field
+                label="Provider ID"
+                value={model.provider_id}
+                onChange={(value) =>
+                  updateItem(config.models, modelIndex, setConfig, "models", {
+                    ...model,
+                    provider_id: value,
+                  })
+                }
+              />
+              <Field
+                label="Description"
+                value={model.description ?? ""}
+                onChange={(value) =>
+                  updateItem(config.models, modelIndex, setConfig, "models", {
+                    ...model,
+                    description: value,
+                  })
+                }
+              />
+            </div>
+          </Card>
+        ))
+      )}
+    </div>
   );
 }
 
-function IconButton({
+function TopBarButton({
   children,
+  disabled,
   label,
   onClick,
 }: React.PropsWithChildren<{
+  disabled?: boolean;
   label: string;
   onClick: () => void;
 }>) {
@@ -1049,34 +533,13 @@ function IconButton({
     <button
       type="button"
       aria-label={label}
+      title={label}
       onClick={onClick}
-      className="rounded-md border border-transparent p-2 text-zinc-500 transition hover:border-zinc-200 hover:bg-zinc-50 hover:text-zinc-900"
+      disabled={disabled}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:text-zinc-900 hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
     >
       {children}
     </button>
-  );
-}
-
-function GhostAction({
-  children,
-  onClick,
-}: React.PropsWithChildren<{ onClick: () => void }>) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900"
-    >
-      {children}
-    </button>
-  );
-}
-
-function MetricPill({ children }: React.PropsWithChildren) {
-  return (
-    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-600">
-      {children}
-    </span>
   );
 }
 
@@ -1084,88 +547,6 @@ function EmptyMiniState({ text }: { text: string }) {
   return (
     <div className="rounded-lg border border-dashed border-zinc-200 px-4 py-6 text-sm text-zinc-500">
       {text}
-    </div>
-  );
-}
-
-function ActionPreview({ action }: { action: HeaderAction }) {
-  const text =
-    action.type === "set"
-      ? `set ${action.name} = ${action.value}`
-      : action.type === "remove"
-        ? `remove ${action.name}`
-        : action.type === "copy"
-          ? `copy ${action.from} -> ${action.to}`
-          : `set_if_absent ${action.name} = ${action.value}`;
-
-  return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-xs text-zinc-700">
-      {text}
-    </div>
-  );
-}
-
-function RuleActionEditor({
-  action,
-  onChange,
-  onRemove,
-}: {
-  action: HeaderAction;
-  onChange: (value: HeaderAction) => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-      <div className="grid gap-3 md:grid-cols-4">
-        <Field
-          label="Type"
-          value={action.type}
-          onChange={(value) => {
-            if (value === "set") {
-              onChange({ type: "set", name: "X-Header", value: "" });
-            } else if (value === "copy") {
-              onChange({ type: "copy", from: "Authorization", to: "X-Authorization" });
-            } else if (value === "set_if_absent") {
-              onChange({ type: "set_if_absent", name: "X-Header", value: "" });
-            } else {
-              onChange({ type: "remove", name: "X-Header" });
-            }
-          }}
-        />
-        {"name" in action && (
-          <Field
-            label="Name"
-            value={action.name}
-            onChange={(value) => onChange({ ...action, name: value } as HeaderAction)}
-          />
-        )}
-        {"value" in action && (
-          <Field
-            label="Value"
-            value={action.value}
-            onChange={(value) => onChange({ ...action, value } as HeaderAction)}
-          />
-        )}
-        {"from" in action && (
-          <Field
-            label="From"
-            value={action.from}
-            onChange={(value) => onChange({ ...action, from: value } as HeaderAction)}
-          />
-        )}
-        {"to" in action && (
-          <Field
-            label="To"
-            value={action.to}
-            onChange={(value) => onChange({ ...action, to: value } as HeaderAction)}
-          />
-        )}
-      </div>
-      <div className="mt-3">
-        <Button onClick={onRemove} className="bg-white text-zinc-900">
-          Remove Action
-        </Button>
-      </div>
     </div>
   );
 }
@@ -1182,17 +563,139 @@ function updateItem<T, K extends keyof GatewayConfig>(
   setConfig((current) => ({ ...current, [key]: next }));
 }
 
-function EditorRow({
-  title,
-  onRemove,
-  children,
-}: React.PropsWithChildren<{ title: string; onRemove: () => void }>) {
-  return (
-    <Card>
-      <SectionActions onRemove={onRemove} title={title} />
-      <div className="grid gap-3 md:grid-cols-2">{children}</div>
-    </Card>
+function renameProviderInConfig(
+  current: GatewayConfig,
+  providerIndex: number,
+  previousId: string,
+  nextId: string,
+) {
+  const trimmed = nextId.trim();
+  const effectiveId = trimmed || previousId;
+  const nextProviders = [...current.providers];
+  nextProviders[providerIndex] = { ...nextProviders[providerIndex], id: effectiveId };
+
+  return {
+    ...current,
+    providers: nextProviders,
+    models: current.models.map((model) =>
+      model.provider_id === previousId ? { ...model, provider_id: effectiveId } : model,
+    ),
+    rule_graph: current.rule_graph
+      ? {
+          ...current.rule_graph,
+          nodes: current.rule_graph.nodes.map((node) =>
+            node.route_provider?.provider_id === previousId
+              ? {
+                  ...node,
+                  route_provider: {
+                    provider_id: effectiveId,
+                  },
+                }
+              : node,
+          ),
+        }
+      : current.rule_graph,
+  };
+}
+
+function removeProviderFromConfig(
+  current: GatewayConfig,
+  providerIndex: number,
+  providerId: string,
+) {
+  const removedModelIds = new Set(
+    current.models.filter((model) => model.provider_id === providerId).map((model) => model.id),
   );
+
+  return {
+    ...current,
+    providers: current.providers.filter((_, item) => item !== providerIndex),
+    models: current.models.filter((model) => model.provider_id !== providerId),
+    rule_graph: current.rule_graph
+      ? {
+          ...current.rule_graph,
+          nodes: current.rule_graph.nodes.map((node) => {
+            if (node.route_provider?.provider_id === providerId) {
+              return {
+                ...node,
+                route_provider: {
+                  provider_id: "",
+                },
+              };
+            }
+
+            if (node.select_model?.model_id && removedModelIds.has(node.select_model.model_id)) {
+              return {
+                ...node,
+                select_model: {
+                  model_id: "",
+                },
+              };
+            }
+
+            return node;
+          }),
+        }
+      : current.rule_graph,
+  };
+}
+
+function renameModelInConfig(
+  current: GatewayConfig,
+  modelIndex: number,
+  previousId: string,
+  nextId: string,
+) {
+  const trimmed = nextId.trim();
+  const effectiveId = trimmed || previousId;
+  const nextModels = [...current.models];
+  nextModels[modelIndex] = { ...nextModels[modelIndex], id: effectiveId };
+
+  return {
+    ...current,
+    models: nextModels,
+    rule_graph: current.rule_graph
+      ? {
+          ...current.rule_graph,
+          nodes: current.rule_graph.nodes.map((node) =>
+            node.select_model?.model_id === previousId
+              ? {
+                  ...node,
+                  select_model: {
+                    model_id: effectiveId,
+                  },
+                }
+              : node,
+          ),
+        }
+      : current.rule_graph,
+  };
+}
+
+function removeModelFromConfig(
+  current: GatewayConfig,
+  modelIndex: number,
+  modelId: string,
+) {
+  return {
+    ...current,
+    models: current.models.filter((_, item) => item !== modelIndex),
+    rule_graph: current.rule_graph
+      ? {
+          ...current.rule_graph,
+          nodes: current.rule_graph.nodes.map((node) =>
+            node.select_model?.model_id === modelId
+              ? {
+                  ...node,
+                  select_model: {
+                    model_id: "",
+                  },
+                }
+              : node,
+          ),
+        }
+      : current.rule_graph,
+  };
 }
 
 function SectionActions({

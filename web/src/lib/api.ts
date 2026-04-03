@@ -1,4 +1,4 @@
-import { normalizeConfig, type GatewayConfig, type GatewayConfigWire } from "./types";
+import { normalizeConfig, toWireConfig, type GatewayConfig, type GatewayConfigWire } from "./types";
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
@@ -25,12 +25,12 @@ export const api = {
   validateConfig: (config: GatewayConfig) =>
     request<void>("/admin/validate", {
       method: "POST",
-      body: JSON.stringify(config),
+      body: JSON.stringify(toWireConfig(config)),
     }),
   saveConfig: (config: GatewayConfig) =>
     request<void>("/admin/config", {
       method: "PUT",
-      body: JSON.stringify(config),
+      body: JSON.stringify(toWireConfig(config)),
     }),
   reloadConfig: () =>
     request<void>("/admin/reload", {
