@@ -1,15 +1,19 @@
 use std::net::SocketAddr;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::routing::{any, get, post};
-use axum::Router;
+use axum::{Extension, Router};
 use clap::{Args, Parser, Subcommand};
-use proxy_tools::admin_api::{get_config, put_config, reload_config, validate_config_handler, AdminState};
+use proxy_tools::admin_api::{
+    AdminState, get_config, put_config, reload_config, validate_config_handler,
+};
 use proxy_tools::config::load_config;
 use proxy_tools::crypto::encrypt_header_value;
 use proxy_tools::frontend::{panel_asset, panel_index};
-use proxy_tools::gateway::{proxy_request, GatewayState};
+use proxy_tools::gateway::{GatewayState, proxy_request};
+use proxy_tools::wasm_plugins::load_plugin_registry;
 use reqwest::Client;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -64,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&cli.config)?;
+    let plugin_registry = Arc::new(load_plugin_registry(Path::new("plugins"))?);
     let gateway_addr: SocketAddr = config.listen.parse()?;
     let admin_addr: SocketAddr = config.admin_listen.parse()?;
     let shared_config = Arc::new(RwLock::new(config));
@@ -79,7 +84,8 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let gateway_app = Router::new()
         .route("/", any(proxy_request))
         .route("/{*rest}", any(proxy_request))
-        .with_state(gateway_state);
+        .with_state(gateway_state)
+        .layer(Extension(plugin_registry.clone()));
 
     let admin_app = Router::new()
         .route("/admin/ui", get(panel_index))
@@ -87,7 +93,8 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .route("/admin/config", get(get_config).put(put_config))
         .route("/admin/validate", post(validate_config_handler))
         .route("/admin/reload", post(reload_config))
-        .with_state(admin_state);
+        .with_state(admin_state)
+        .layer(Extension(plugin_registry));
 
     let gateway_listener = TcpListener::bind(gateway_addr).await?;
     let admin_listener = TcpListener::bind(admin_addr).await?;
@@ -95,10 +102,10 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     info!(listen = %gateway_addr, "gateway listening");
     info!(admin_listen = %admin_addr, "admin listening");
 
-    let gateway_server = axum::serve(gateway_listener, gateway_app)
-        .with_graceful_shutdown(shutdown_signal());
-    let admin_server = axum::serve(admin_listener, admin_app)
-        .with_graceful_shutdown(shutdown_signal());
+    let gateway_server =
+        axum::serve(gateway_listener, gateway_app).with_graceful_shutdown(shutdown_signal());
+    let admin_server =
+        axum::serve(admin_listener, admin_app).with_graceful_shutdown(shutdown_signal());
 
     tokio::try_join!(gateway_server, admin_server)?;
     Ok(())

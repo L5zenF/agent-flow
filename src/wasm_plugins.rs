@@ -1,0 +1,419 @@
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use wasmtime::{Engine, component::Component};
+
+type PluginResult<T> = Result<T, Box<dyn Error>>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestCapability {
+    Log,
+    Fs,
+    Network,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginManifest {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub supported_output_ports: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Vec<ManifestCapability>,
+    #[serde(default)]
+    pub default_config_schema_hints: Option<toml::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPluginManifest {
+    id: String,
+    name: String,
+    version: String,
+    description: String,
+    supported_output_ports: Vec<String>,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    #[serde(default)]
+    default_config_schema_hints: Option<toml::Value>,
+}
+
+#[derive(Clone)]
+pub struct ComponentCache {
+    engine: Arc<Engine>,
+    components: BTreeMap<PathBuf, Arc<Component>>,
+}
+
+impl ComponentCache {
+    pub fn new() -> Self {
+        Self {
+            engine: Arc::new(Engine::default()),
+            components: BTreeMap::new(),
+        }
+    }
+
+    pub fn get_or_load(&mut self, path: &Path) -> PluginResult<Arc<Component>> {
+        let cache_key = path.to_path_buf();
+        if let Some(component) = self.components.get(&cache_key) {
+            return Ok(component.clone());
+        }
+
+        let component = Arc::new(Component::from_file(self.engine.as_ref(), path)?);
+        self.components.insert(cache_key, component.clone());
+        Ok(component)
+    }
+}
+
+#[derive(Clone)]
+pub struct LoadedPlugin {
+    manifest: PluginManifest,
+    manifest_path: PathBuf,
+    directory: PathBuf,
+    wasm_path: PathBuf,
+    component: Arc<Component>,
+}
+
+impl LoadedPlugin {
+    pub fn plugin_id(&self) -> &str {
+        &self.manifest.id
+    }
+
+    pub fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    pub fn manifest_path(&self) -> &Path {
+        &self.manifest_path
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub fn wasm_path(&self) -> &Path {
+        &self.wasm_path
+    }
+
+    pub fn component(&self) -> &Component {
+        self.component.as_ref()
+    }
+}
+
+#[derive(Clone)]
+pub struct PluginRegistry {
+    plugins_root: PathBuf,
+    component_cache: ComponentCache,
+    plugins: BTreeMap<String, LoadedPlugin>,
+}
+
+impl PluginRegistry {
+    pub fn root(&self) -> &Path {
+        &self.plugins_root
+    }
+
+    pub fn len(&self) -> usize {
+        self.plugins.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.plugins.is_empty()
+    }
+
+    pub fn get(&self, plugin_id: &str) -> Option<&LoadedPlugin> {
+        self.plugins.get(plugin_id)
+    }
+
+    pub fn plugins(&self) -> impl Iterator<Item = &LoadedPlugin> {
+        self.plugins.values()
+    }
+}
+
+pub fn load_plugin_registry(path: &Path) -> PluginResult<PluginRegistry> {
+    if !path.exists() {
+        return Ok(PluginRegistry {
+            plugins_root: path.to_path_buf(),
+            component_cache: ComponentCache::new(),
+            plugins: BTreeMap::new(),
+        });
+    }
+
+    if !path.is_dir() {
+        return Err(invalid_data(format!(
+            "plugin registry root '{}' is not a directory",
+            path.display()
+        )));
+    }
+
+    let mut component_cache = ComponentCache::new();
+    let mut plugins = BTreeMap::new();
+    let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let directory = entry.path();
+        let manifest_path = directory.join("plugin.toml");
+        let wasm_path = directory.join("plugin.wasm");
+
+        if !manifest_path.is_file() {
+            return Err(invalid_data(format!(
+                "plugin directory '{}' is missing plugin.toml",
+                directory.display()
+            )));
+        }
+        if !wasm_path.is_file() {
+            return Err(invalid_data(format!(
+                "plugin directory '{}' is missing plugin.wasm",
+                directory.display()
+            )));
+        }
+
+        let manifest_raw = fs::read_to_string(&manifest_path)?;
+        let manifest = parse_plugin_manifest(&manifest_path, &manifest_raw)?;
+
+        let component = component_cache.get_or_load(&wasm_path)?;
+        let plugin = LoadedPlugin {
+            manifest: manifest.clone(),
+            manifest_path,
+            directory,
+            wasm_path,
+            component,
+        };
+
+        if plugins.insert(manifest.id.clone(), plugin).is_some() {
+            return Err(invalid_data(format!(
+                "duplicate plugin id '{}'",
+                manifest.id
+            )));
+        }
+    }
+
+    Ok(PluginRegistry {
+        plugins_root: path.to_path_buf(),
+        component_cache,
+        plugins,
+    })
+}
+
+fn parse_plugin_manifest(path: &Path, raw: &str) -> PluginResult<PluginManifest> {
+    let raw_manifest: RawPluginManifest = toml::from_str(raw).map_err(|error| {
+        invalid_data(format!(
+            "failed to parse plugin manifest '{}': {error}",
+            path.display()
+        ))
+    })?;
+
+    let capabilities = raw_manifest
+        .capabilities
+        .into_iter()
+        .map(|capability| parse_manifest_capability(path, &capability))
+        .collect::<PluginResult<Vec<_>>>()?;
+
+    Ok(PluginManifest {
+        id: raw_manifest.id,
+        name: raw_manifest.name,
+        version: raw_manifest.version,
+        description: raw_manifest.description,
+        supported_output_ports: raw_manifest.supported_output_ports,
+        capabilities,
+        default_config_schema_hints: raw_manifest.default_config_schema_hints,
+    })
+}
+
+fn parse_manifest_capability(path: &Path, capability: &str) -> PluginResult<ManifestCapability> {
+    match capability {
+        "log" => Ok(ManifestCapability::Log),
+        "fs" => Ok(ManifestCapability::Fs),
+        "network" => Ok(ManifestCapability::Network),
+        other => Err(invalid_data(format!(
+            "plugin manifest '{}' declares unsupported capability '{}' (supported: log, fs, network)",
+            path.display(),
+            other
+        ))),
+    }
+}
+
+fn invalid_data(message: impl Into<String>) -> Box<dyn Error> {
+    Box::new(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        message.into(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ManifestCapability, load_plugin_registry, parse_plugin_manifest};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const TEST_COMPONENT_BYTES: &[u8] = &[
+        0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00, 0x07, 0x10, 0x01, 0x41, 0x02, 0x01, 0x42,
+        0x00, 0x04, 0x01, 0x05, 0x65, 0x3a, 0x65, 0x2f, 0x65, 0x05, 0x00, 0x0b, 0x07, 0x01, 0x00,
+        0x01, 0x65, 0x03, 0x00, 0x00,
+    ];
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be monotonic enough for tests")
+            .as_nanos();
+        dir.push(format!(
+            "proxy-tools-wasm-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir should be creatable");
+        dir
+    }
+
+    fn write_plugin(root: &Path, id: &str, manifest: &str) {
+        let plugin_dir = root.join(id);
+        fs::create_dir_all(&plugin_dir).expect("plugin dir should be creatable");
+        fs::write(plugin_dir.join("plugin.toml"), manifest).expect("manifest should write");
+        fs::write(plugin_dir.join("plugin.wasm"), TEST_COMPONENT_BYTES).expect("wasm should write");
+    }
+
+    #[test]
+    fn scans_plugins_directory() {
+        let root = temp_dir("scan");
+        write_plugin(
+            &root,
+            "intent-classifier",
+            r#"
+id = "intent-classifier"
+name = "Intent Classifier"
+version = "1.0.0"
+description = "Classifies request intent"
+supported_output_ports = ["chat", "default"]
+capabilities = ["log", "network"]
+default_config_schema_hints = { prompt = "string", default_intent = "string" }
+"#,
+        );
+
+        let registry = load_plugin_registry(&root).expect("registry should load");
+        assert_eq!(registry.root(), root.as_path());
+        assert_eq!(registry.len(), 1);
+
+        let plugin = registry
+            .get("intent-classifier")
+            .expect("plugin should be registered");
+        assert_eq!(plugin.plugin_id(), "intent-classifier");
+        assert_eq!(plugin.manifest().name, "Intent Classifier");
+        assert_eq!(
+            plugin.manifest().supported_output_ports,
+            vec!["chat", "default"]
+        );
+        assert_eq!(
+            plugin.manifest().capabilities,
+            vec![ManifestCapability::Log, ManifestCapability::Network]
+        );
+        assert_eq!(plugin.directory(), root.join("intent-classifier").as_path());
+        assert_eq!(
+            plugin.wasm_path(),
+            root.join("intent-classifier").join("plugin.wasm").as_path()
+        );
+    }
+
+    #[test]
+    fn parses_plugin_toml() {
+        let manifest = parse_plugin_manifest(
+            Path::new("plugins/intent-classifier/plugin.toml"),
+            r#"
+id = "intent-classifier"
+name = "Intent Classifier"
+version = "1.0.0"
+description = "Classifies request intent"
+supported_output_ports = ["chat", "default"]
+capabilities = ["fs", "network"]
+default_config_schema_hints = { prompt = "string", default_intent = "string" }
+"#,
+        )
+        .expect("manifest should parse");
+
+        assert_eq!(manifest.id, "intent-classifier");
+        assert_eq!(manifest.name, "Intent Classifier");
+        assert_eq!(manifest.version, "1.0.0");
+        assert_eq!(manifest.description, "Classifies request intent");
+        assert_eq!(manifest.supported_output_ports, vec!["chat", "default"]);
+        assert_eq!(
+            manifest.capabilities,
+            vec![ManifestCapability::Fs, ManifestCapability::Network]
+        );
+        let hints = manifest
+            .default_config_schema_hints
+            .as_ref()
+            .and_then(|value| value.as_table())
+            .expect("schema hints should be a table");
+        assert_eq!(
+            hints.get("prompt").and_then(|value| value.as_str()),
+            Some("string")
+        );
+        assert_eq!(
+            hints.get("default_intent").and_then(|value| value.as_str()),
+            Some("string")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_plugin_ids() {
+        let root = temp_dir("duplicate");
+        let manifest = r#"
+id = "intent-classifier"
+name = "Intent Classifier"
+version = "1.0.0"
+description = "Classifies request intent"
+supported_output_ports = ["chat", "default"]
+capabilities = ["log"]
+"#;
+        write_plugin(&root, "intent-classifier", manifest);
+        write_plugin(&root, "intent-classifier-copy", manifest);
+
+        let error = match load_plugin_registry(&root) {
+            Ok(_) => panic!("duplicate ids should fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate plugin id 'intent-classifier'"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_capability_declarations() {
+        let root = temp_dir("unsupported-capability");
+        write_plugin(
+            &root,
+            "intent-classifier",
+            r#"
+id = "intent-classifier"
+name = "Intent Classifier"
+version = "1.0.0"
+description = "Classifies request intent"
+supported_output_ports = ["chat", "default"]
+capabilities = ["log", "shell"]
+"#,
+        );
+
+        let error = match load_plugin_registry(&root) {
+            Ok(_) => panic!("unsupported capability should fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported capability 'shell' (supported: log, fs, network)"),
+            "unexpected error: {error}"
+        );
+    }
+}
