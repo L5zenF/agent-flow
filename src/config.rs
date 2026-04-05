@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -304,8 +304,7 @@ pub struct WasmPluginNodeConfig {
     pub timeout_ms: u64,
     #[serde(default)]
     pub fuel: Option<u64>,
-    #[serde(default)]
-    pub max_memory_bytes: Option<u64>,
+    pub max_memory_bytes: u64,
     #[serde(default)]
     pub granted_capabilities: Vec<WasmCapability>,
     #[serde(default)]
@@ -949,9 +948,9 @@ fn validate_wasm_plugin_node(
             format!("rule_graph node '{node_id}' fuel must be greater than zero when set").into(),
         );
     }
-    if matches!(config.max_memory_bytes, Some(0)) {
+    if config.max_memory_bytes == 0 {
         return Err(format!(
-            "rule_graph node '{node_id}' max_memory_bytes must be greater than zero when set"
+            "rule_graph node '{node_id}' max_memory_bytes must be greater than zero"
         )
         .into());
     }
@@ -1015,10 +1014,22 @@ fn validate_wasm_plugin_paths(
                 format!("rule_graph node '{node_id}' {field} cannot contain empty paths").into(),
             );
         }
-        if Path::new(path).is_absolute() {
+        let path_ref = Path::new(path);
+        if path_ref.is_absolute() {
             return Err(
                 format!("rule_graph node '{node_id}' {field} must use relative paths").into(),
             );
+        }
+        if path_ref.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
+            )
+        }) {
+            return Err(format!(
+                "rule_graph node '{node_id}' {field} must not contain parent traversal"
+            )
+            .into());
         }
     }
 
@@ -1132,7 +1143,7 @@ fn default_rule_graph_version() -> u32 {
 }
 
 fn default_wasm_plugin_timeout_ms() -> u64 {
-    1
+    20
 }
 
 fn default_enabled() -> bool {
@@ -1256,7 +1267,6 @@ position = { x = 120.0, y = 0.0 }
 
 [rule_graph.nodes.wasm_plugin]
 plugin_id = "intent-classifier"
-timeout_ms = 25
 fuel = 500000
 max_memory_bytes = 16777216
 granted_capabilities = ["fs", "network"]
@@ -1438,9 +1448,9 @@ target = "end"
             .as_ref()
             .expect("wasm plugin config should exist");
         assert_eq!(plugin.plugin_id, "intent-classifier");
-        assert_eq!(plugin.timeout_ms, 25);
+        assert_eq!(plugin.timeout_ms, 20);
         assert_eq!(plugin.fuel, Some(500000));
-        assert_eq!(plugin.max_memory_bytes, Some(16_777_216));
+        assert_eq!(plugin.max_memory_bytes, 16_777_216);
         assert_eq!(plugin.granted_capabilities.len(), 2);
         assert_eq!(plugin.read_dirs, vec!["plugins-data/common"]);
         assert_eq!(plugin.write_dirs, vec!["plugins-data/runtime"]);
@@ -1503,5 +1513,21 @@ target = "end"
         assert_eq!(plugin.read_dirs, vec!["plugins-data/common"]);
         assert_eq!(plugin.write_dirs, vec!["plugins-data/runtime"]);
         assert_eq!(plugin.allowed_hosts, vec!["api.example.com:443"]);
+    }
+
+    #[test]
+    fn rejects_parent_traversal_in_plugin_dirs() {
+        let invalid = VALID_WASM_PLUGIN_CONFIG.replace(
+            "read_dirs = [\"plugins-data/common\"]\n",
+            "read_dirs = [\"plugins-data/../../secret\"]\n",
+        );
+        let error = parse_config(&invalid).expect_err("path traversal should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("must not contain parent traversal"),
+            "unexpected error: {error}"
+        );
     }
 }
