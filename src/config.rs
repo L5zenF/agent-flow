@@ -453,7 +453,7 @@ pub fn validate_config(config: &GatewayConfig) -> Result<(), Box<dyn std::error:
 
 pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
     let Some(graph) = config.rule_graph.take() else {
-        return config;
+        return normalize_workflow_index_inputs(config);
     };
 
     let node_map = graph
@@ -574,7 +574,7 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
             .collect(),
         ..graph
     });
-    synthesize_legacy_workflow_index(config)
+    normalize_workflow_index_inputs(synthesize_legacy_workflow_index(config))
 }
 
 fn synthesize_legacy_workflow_index(mut config: GatewayConfig) -> GatewayConfig {
@@ -600,6 +600,17 @@ fn synthesize_legacy_workflow_index(mut config: GatewayConfig) -> GatewayConfig 
             file: format!("{synthesized_workflow_id}.toml"),
             description: Some("Migrated from legacy rule_graph".to_string()),
         }];
+    }
+
+    config
+}
+
+fn normalize_workflow_index_inputs(mut config: GatewayConfig) -> GatewayConfig {
+    if let Some(workflows_dir) = config.workflows_dir.as_mut() {
+        *workflows_dir = workflows_dir.trim().to_string();
+    }
+    for workflow in &mut config.workflows {
+        workflow.file = workflow.file.trim().to_string();
     }
 
     config
@@ -1449,6 +1460,27 @@ description = "Main chat flow"
         assert_eq!(config.active_workflow_id.as_deref(), Some("chat-routing"));
         assert_eq!(config.workflows.len(), 1);
         assert_eq!(config.workflows[0].file, "chat-routing.toml");
+    }
+
+    #[test]
+    fn trims_workflow_index_path_inputs_during_parse() {
+        let config = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+workflows_dir = " workflows "
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = " default.toml "
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.workflows_dir.as_deref(), Some("workflows"));
+        assert_eq!(config.workflows[0].file, "default.toml");
     }
 
     #[test]
