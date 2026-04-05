@@ -9,6 +9,7 @@ import {
   ListTree,
   Minus,
   Plus,
+  Puzzle,
   Route,
   DatabaseZap,
   ShieldPlus,
@@ -47,11 +48,14 @@ import {
   type RuleGraphConfig,
   type RuleGraphNode,
   type RuleGraphNodeType,
+  type WasmCapability,
+  type WasmPluginManifestSummary,
 } from "@/lib/types";
 
 type Props = {
   config: GatewayConfig;
   setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
+  pluginManifests: WasmPluginManifestSummary[];
 };
 
 type ValidationResult = {
@@ -72,6 +76,8 @@ type RuleCanvasNodeData = {
   issueCount: number;
   unreachable: boolean;
   validationIssues: string[];
+  pluginManifest?: WasmPluginManifestSummary | null;
+  pluginManifestOptions: SelectOption[];
   providerOptions: SelectOption[];
   modelOptions: SelectOption[];
   templateSuggestions: string[];
@@ -107,6 +113,7 @@ const NODE_LIBRARY: Array<{ type: RuleGraphNodeType; label: string }> = [
   { type: "remove_header", label: "Remove Header" },
   { type: "copy_header", label: "Copy Header" },
   { type: "set_header_if_absent", label: "Set If Absent" },
+  { type: "wasm_plugin", label: "Wasm Plugin" },
   { type: "note", label: "Note" },
   { type: "end", label: "End" },
 ];
@@ -124,14 +131,19 @@ const TEMPLATE_SUGGESTIONS_BASE = [
   "${ctx.header.authorization}",
   "${ctx.header.x-target}",
 ];
+const WASM_CAPABILITY_OPTIONS: Array<{ value: WasmCapability; label: string }> = [
+  { value: "log", label: "Log" },
+  { value: "fs", label: "FS" },
+  { value: "network", label: "Network" },
+];
 
-export function RuleGraphEditor({ config, setConfig }: Props) {
+export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   const graph = config.rule_graph ?? emptyConfig().rule_graph!;
   const graphRef = useRef(graph);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph.start_node_id);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
-  const validation = useMemo(() => validateGraph(graph, config), [graph, config]);
+  const validation = useMemo(() => validateGraph(graph, config, pluginManifests), [graph, config, pluginManifests]);
   const providerOptions = useMemo(
     () => config.providers.map((provider) => ({ value: provider.id, label: provider.id })),
     [config.providers],
@@ -144,6 +156,18 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
         providerId: model.provider_id,
       })),
     [config.models],
+  );
+  const pluginManifestOptions = useMemo(
+    () =>
+      pluginManifests.map((plugin) => ({
+        value: plugin.id,
+        label: `${plugin.id} · ${plugin.version}`,
+      })),
+    [pluginManifests],
+  );
+  const pluginManifestMap = useMemo(
+    () => new Map(pluginManifests.map((plugin) => [plugin.id, plugin])),
+    [pluginManifests],
   );
   const templateSuggestions = useMemo(() => {
     const customCtxKeys = graph.nodes
@@ -186,6 +210,10 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
           issueCount: (validation.nodeIssues[node.id] ?? []).length,
           unreachable: validation.unreachableNodeIds.has(node.id),
           validationIssues: validation.nodeIssues[node.id] ?? [],
+          pluginManifest: node.wasm_plugin?.plugin_id
+            ? (pluginManifestMap.get(node.wasm_plugin.plugin_id) ?? null)
+            : null,
+          pluginManifestOptions,
           providerOptions,
           modelOptions,
           templateSuggestions,
@@ -204,6 +232,8 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
     [
       graph,
       modelOptions,
+      pluginManifestMap,
+      pluginManifestOptions,
       providerOptions,
       selectedNodeId,
       setConfig,
@@ -400,7 +430,9 @@ export function RuleGraphEditor({ config, setConfig }: Props) {
         : setEdgeTarget(
             graph,
             connection.source,
-            sourceNode.type === "condition" ? connection.sourceHandle ?? null : null,
+            sourceNode.type === "condition" || sourceNode.type === "wasm_plugin"
+              ? connection.sourceHandle ?? null
+              : null,
             connection.target,
           );
 
@@ -550,6 +582,12 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
   const noteEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const routerBranches = draft.router?.rules ?? [];
   const routerHandleCount = routerBranches.length + 1;
+  const pluginOutputPorts =
+    data.nodeType === "wasm_plugin"
+      ? data.pluginManifest?.supported_output_ports?.length
+        ? Array.from(new Set(["default", ...data.pluginManifest.supported_output_ports]))
+        : ["default"]
+      : [];
 
   useEffect(() => {
     setDraft(data.node);
@@ -574,6 +612,8 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
       <DatabaseZap className="h-4 w-4" />
     ) : data.nodeType === "note" ? (
       <FileText className="h-4 w-4" />
+    ) : data.nodeType === "wasm_plugin" ? (
+      <Puzzle className="h-4 w-4" />
     ) : data.nodeType === "start" || data.nodeType === "end" ? (
       <Grip className="h-4 w-4" />
     ) : (
@@ -646,6 +686,22 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
             }}
             className="!h-3 !w-3 !border-2 !border-white"
           />
+        </>
+      ) : data.nodeType === "wasm_plugin" ? (
+        <>
+          {pluginOutputPorts.map((port, index) => (
+            <Handle
+              key={port}
+              id={port}
+              type="source"
+              position={Position.Right}
+              style={{
+                top: `${((index + 1) / (pluginOutputPorts.length + 1)) * 100}%`,
+                backgroundColor: port === "default" ? "#0f766e" : "#0ea5e9",
+              }}
+              className="!h-3 !w-3 !border-2 !border-white"
+            />
+          ))}
         </>
       ) : data.nodeType !== "end" && data.nodeType !== "note" ? (
         <Handle
@@ -1091,6 +1147,249 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
             />
           ) : null}
 
+          {draft.type === "wasm_plugin" ? (
+            <div className="space-y-2">
+              <InlineSelect
+                value={draft.wasm_plugin?.plugin_id ?? ""}
+                options={data.pluginManifestOptions}
+                onChange={(value) => {
+                  commitNode({
+                    ...draft,
+                    wasm_plugin: {
+                      plugin_id: value,
+                      timeout_ms: draft.wasm_plugin?.timeout_ms ?? 20,
+                      fuel: draft.wasm_plugin?.fuel ?? null,
+                      max_memory_bytes: draft.wasm_plugin?.max_memory_bytes ?? 16_777_216,
+                      granted_capabilities: draft.wasm_plugin?.granted_capabilities ?? [],
+                      read_dirs: draft.wasm_plugin?.read_dirs ?? [],
+                      write_dirs: draft.wasm_plugin?.write_dirs ?? [],
+                      allowed_hosts: draft.wasm_plugin?.allowed_hosts ?? [],
+                      config: draft.wasm_plugin?.config ?? {},
+                    },
+                  });
+                }}
+                placeholder="Select plugin"
+              />
+
+              {data.pluginManifest ? (
+                <div className="rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-[11px] text-sky-950">
+                  <div className="font-medium">
+                    {data.pluginManifest.name} · {data.pluginManifest.version}
+                  </div>
+                  <div className="mt-1 text-sky-800">{data.pluginManifest.description}</div>
+                  <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-sky-700">
+                    Ports: {["default", ...data.pluginManifest.supported_output_ports].join(", ")}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-2 gap-2">
+                <InlineInput
+                  value={String(draft.wasm_plugin?.timeout_ms ?? 20)}
+                  placeholder="20"
+                  onChange={(value) =>
+                    setDraft((current) => ({
+                      ...current,
+                      wasm_plugin: {
+                        ...current.wasm_plugin!,
+                        timeout_ms: value === "" ? 0 : Number(value),
+                      },
+                    }))
+                  }
+                  onCommit={(value) =>
+                    commitNode({
+                      ...draft,
+                      wasm_plugin: {
+                        ...draft.wasm_plugin!,
+                        timeout_ms: value === "" ? 0 : Number(value),
+                      },
+                    })
+                  }
+                />
+                <InlineInput
+                  value={draft.wasm_plugin?.fuel != null ? String(draft.wasm_plugin.fuel) : ""}
+                  placeholder="optional fuel"
+                  onChange={(value) =>
+                    setDraft((current) => ({
+                      ...current,
+                      wasm_plugin: {
+                        ...current.wasm_plugin!,
+                        fuel: value === "" ? null : Number(value),
+                      },
+                    }))
+                  }
+                  onCommit={(value) =>
+                    commitNode({
+                      ...draft,
+                      wasm_plugin: {
+                        ...draft.wasm_plugin!,
+                        fuel: value === "" ? null : Number(value),
+                      },
+                    })
+                  }
+                />
+              </div>
+
+              <InlineInput
+                value={String(draft.wasm_plugin?.max_memory_bytes ?? 16_777_216)}
+                placeholder="16777216"
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    wasm_plugin: {
+                      ...current.wasm_plugin!,
+                      max_memory_bytes: value === "" ? 0 : Number(value),
+                    },
+                  }))
+                }
+                onCommit={(value) =>
+                  commitNode({
+                    ...draft,
+                    wasm_plugin: {
+                      ...draft.wasm_plugin!,
+                      max_memory_bytes: value === "" ? 0 : Number(value),
+                    },
+                  })
+                }
+              />
+
+              <div className="rounded-2xl border border-zinc-200/80 bg-white/70 p-3">
+                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                  Capabilities
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {WASM_CAPABILITY_OPTIONS.map((option) => {
+                    const enabled = draft.wasm_plugin?.granted_capabilities.includes(option.value) ?? false;
+                    const declared =
+                      data.pluginManifest?.capabilities.includes(option.value) ?? true;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const current = draft.wasm_plugin?.granted_capabilities ?? [];
+                          const next = enabled
+                            ? current.filter((item) => item !== option.value)
+                            : [...current, option.value];
+                          commitNode({
+                            ...draft,
+                            wasm_plugin: {
+                              ...draft.wasm_plugin!,
+                              granted_capabilities: next,
+                            },
+                          });
+                        }}
+                        className={[
+                          "nodrag nopan rounded-full border px-3 py-1 text-xs transition",
+                          enabled
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400",
+                          declared ? "" : "opacity-55",
+                        ].join(" ")}
+                        title={declared ? option.label : "Not declared by selected plugin manifest"}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <InlineTextarea
+                value={formatListForTextarea(draft.wasm_plugin?.read_dirs ?? [])}
+                placeholder={"plugins-data/common\ndata/rules"}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    wasm_plugin: {
+                      ...current.wasm_plugin!,
+                      read_dirs: parseTextareaList(value),
+                    },
+                  }))
+                }
+                onCommit={(value) =>
+                  commitNode({
+                    ...draft,
+                    wasm_plugin: {
+                      ...draft.wasm_plugin!,
+                      read_dirs: parseTextareaList(value),
+                    },
+                  })
+                }
+              />
+
+              <InlineTextarea
+                value={formatListForTextarea(draft.wasm_plugin?.write_dirs ?? [])}
+                placeholder={"plugins-data/runtime"}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    wasm_plugin: {
+                      ...current.wasm_plugin!,
+                      write_dirs: parseTextareaList(value),
+                    },
+                  }))
+                }
+                onCommit={(value) =>
+                  commitNode({
+                    ...draft,
+                    wasm_plugin: {
+                      ...draft.wasm_plugin!,
+                      write_dirs: parseTextareaList(value),
+                    },
+                  })
+                }
+              />
+
+              <InlineTextarea
+                value={formatListForTextarea(draft.wasm_plugin?.allowed_hosts ?? [])}
+                placeholder={"api.example.com:443\n127.0.0.1:8080"}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    wasm_plugin: {
+                      ...current.wasm_plugin!,
+                      allowed_hosts: parseTextareaList(value),
+                    },
+                  }))
+                }
+                onCommit={(value) =>
+                  commitNode({
+                    ...draft,
+                    wasm_plugin: {
+                      ...draft.wasm_plugin!,
+                      allowed_hosts: parseTextareaList(value),
+                    },
+                  })
+                }
+              />
+
+              <InlineTextarea
+                value={formatPluginConfig(draft.wasm_plugin?.config ?? {})}
+                placeholder={'{\n  "prompt": "classify request intent"\n}'}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    wasm_plugin: {
+                      ...current.wasm_plugin!,
+                      config: parsePluginConfig(value, current.wasm_plugin?.config ?? {}),
+                    },
+                  }))
+                }
+                onCommit={(value) =>
+                  commitNode({
+                    ...draft,
+                    wasm_plugin: {
+                      ...draft.wasm_plugin!,
+                      config: parsePluginConfig(value, draft.wasm_plugin?.config ?? {}),
+                    },
+                  })
+                }
+              />
+            </div>
+          ) : null}
+
           {(draft.type === "set_header" || draft.type === "set_header_if_absent") && (
             <div className="grid grid-cols-1 gap-2">
               <InlineInput
@@ -1436,6 +1735,9 @@ function edgeLabelForHandle(sourceHandle: string | null) {
   if (sourceHandle === "true" || sourceHandle === "false") {
     return sourceHandle;
   }
+  if (sourceHandle === "default") {
+    return "default";
+  }
   if (sourceHandle?.startsWith("router:")) {
     const key = sourceHandle.slice("router:".length);
     return key === "fallback" ? "fallback" : key.replace(/^rule-/, "");
@@ -1522,6 +1824,21 @@ function createNode(
       return { ...base, copy_header: { from: "Authorization", to: "X-Authorization" } };
     case "set_header_if_absent":
       return { ...base, set_header_if_absent: { name: "X-Header", value: "" } };
+    case "wasm_plugin":
+      return {
+        ...base,
+        wasm_plugin: {
+          plugin_id: "",
+          timeout_ms: 20,
+          fuel: null,
+          max_memory_bytes: 16_777_216,
+          granted_capabilities: [],
+          read_dirs: [],
+          write_dirs: [],
+          allowed_hosts: [],
+          config: {},
+        },
+      };
     case "note":
       return { ...base, note_node: { text: "" } };
     default:
@@ -1602,7 +1919,11 @@ function updateGraph(
   }));
 }
 
-function validateGraph(graph: RuleGraphConfig, config: GatewayConfig): ValidationResult {
+function validateGraph(
+  graph: RuleGraphConfig,
+  config: GatewayConfig,
+  pluginManifests: WasmPluginManifestSummary[],
+): ValidationResult {
   const globalIssues: string[] = [];
   const nodeIssues: Record<string, string[]> = {};
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -1736,6 +2057,51 @@ function validateGraph(graph: RuleGraphConfig, config: GatewayConfig): Validatio
       if (!node.copy_header?.to) issues.push("Target header is required.");
     }
 
+    if (node.type === "wasm_plugin") {
+      const manifest = pluginManifests.find(
+        (plugin) => plugin.id === (node.wasm_plugin?.plugin_id ?? ""),
+      );
+      if (!node.wasm_plugin?.plugin_id?.trim()) {
+        issues.push("Plugin id is required.");
+      } else if (!manifest) {
+        issues.push("Selected plugin is not loaded.");
+      }
+      if ((node.wasm_plugin?.timeout_ms ?? 0) <= 0) {
+        issues.push("Timeout must be greater than zero.");
+      }
+      if ((node.wasm_plugin?.fuel ?? 1) === 0) {
+        issues.push("Fuel must be greater than zero when set.");
+      }
+      if ((node.wasm_plugin?.max_memory_bytes ?? 0) <= 0) {
+        issues.push("Memory limit must be greater than zero.");
+      }
+
+      const granted = new Set(node.wasm_plugin?.granted_capabilities ?? []);
+      if (manifest) {
+        for (const capability of node.wasm_plugin?.granted_capabilities ?? []) {
+          if (!manifest.capabilities.includes(capability)) {
+            issues.push(`Capability '${capability}' is not declared by the selected plugin.`);
+          }
+        }
+      }
+
+      if (granted.has("fs")) {
+        if (!(node.wasm_plugin?.read_dirs.length || node.wasm_plugin?.write_dirs.length)) {
+          issues.push("FS capability requires read or write directories.");
+        }
+      } else if (node.wasm_plugin?.read_dirs.length || node.wasm_plugin?.write_dirs.length) {
+        issues.push("FS directories require the fs capability.");
+      }
+
+      if (granted.has("network")) {
+        if (!node.wasm_plugin?.allowed_hosts.length) {
+          issues.push("Network capability requires allowed hosts.");
+        }
+      } else if (node.wasm_plugin?.allowed_hosts.length) {
+        issues.push("Allowed hosts require the network capability.");
+      }
+    }
+
     if (node.type !== "note" && issues.length > 0) {
       nodeIssues[node.id] = issues;
     }
@@ -1777,6 +2143,8 @@ function labelForType(type: RuleGraphNodeType) {
       return "Copy Header";
     case "set_header_if_absent":
       return "Set If Absent";
+    case "wasm_plugin":
+      return "Wasm Plugin";
     case "note":
       return "Note";
     case "end":
@@ -1806,6 +2174,8 @@ function shortLabelForType(type: RuleGraphNodeType) {
       return "Copy";
     case "set_header_if_absent":
       return "Guard";
+    case "wasm_plugin":
+      return "Wasm";
     case "note":
       return "Note";
     case "end":
@@ -1961,6 +2331,18 @@ function toneForNodeType(type: RuleGraphNodeType): NodeTone {
         handle: "#f59e0b",
         edge: "#f59e0b",
       };
+    case "wasm_plugin":
+      return {
+        cardBorder: "border-teal-300",
+        cardBg: "bg-teal-100/92",
+        chipBg: "bg-teal-200",
+        chipText: "text-teal-950",
+        icon: "text-teal-700",
+        libraryButton: "border-teal-300 text-teal-800 hover:border-teal-500 hover:text-teal-950",
+        minimap: "#0f766e",
+        handle: "#0f766e",
+        edge: "#0f766e",
+      };
     case "end":
       return {
         cardBorder: "border-slate-300",
@@ -1999,6 +2381,8 @@ function iconForLibraryNode(type: RuleGraphNodeType) {
       return <CopyPlus className={iconClass} />;
     case "set_header_if_absent":
       return <ShieldPlus className={iconClass} />;
+    case "wasm_plugin":
+      return <Puzzle className={iconClass} />;
     case "note":
       return <FileText className={iconClass} />;
     case "end":
@@ -2055,6 +2439,40 @@ function filterSuggestions(suggestions: string[] | undefined, match: CompletionM
       : suggestions.map((suggestion) => contextSuggestionValue(suggestion));
 
   return candidatePool.filter((candidate) => candidate.toLowerCase().startsWith(match.query));
+}
+
+function parseTextareaList(value: string) {
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function formatListForTextarea(items: string[]) {
+  return items.join("\n");
+}
+
+function formatPluginConfig(config: Record<string, unknown>) {
+  try {
+    return JSON.stringify(config, null, 2);
+  } catch {
+    return "{}";
+  }
+}
+
+function parsePluginConfig(value: string, fallback: Record<string, unknown>) {
+  if (!value.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function InlineInput({

@@ -21,6 +21,8 @@
   - 按作用域和条件表达式执行头部动作
 - 密文字段
   - 任意 provider 默认头部都可以加密存储
+- `wasm_plugin`
+  - 用 WASM 组件扩展单个图节点能力，流程编排仍由用户拖拽节点完成
 
 ## 配置文件
 
@@ -116,6 +118,7 @@ value = "${model.id}"
 
 - `start`
 - `condition`
+- `wasm_plugin`
 - `route_provider`
 - `select_model`
 - `rewrite_path`
@@ -162,9 +165,71 @@ http://127.0.0.1:9002/admin/ui
 ## 管理 API
 
 - `GET /admin/config`
+- `GET /admin/plugins`
 - `PUT /admin/config`
 - `POST /admin/validate`
 - `POST /admin/reload`
+
+## WASM 插件
+
+本地插件目录结构：
+
+```text
+plugins/
+  intent-classifier/
+    plugin.toml
+    plugin.wasm
+    Cargo.toml
+    src/lib.rs
+    wit/world.wit
+```
+
+当前仓库自带一个 sample plugin：`plugins/intent-classifier`。
+
+构建命令：
+
+```bash
+cd plugins/intent-classifier
+CARGO_COMPONENT_CACHE_DIR=../../.cargo-component-cache cargo component build --release
+cp target/wasm32-wasip1/release/intent_classifier.wasm plugin.wasm
+```
+
+示例规则图节点：
+
+```toml
+[[rule_graph.nodes]]
+id = "intent-plugin"
+type = "wasm_plugin"
+
+[rule_graph.nodes.position]
+x = 320.0
+y = 180.0
+
+[rule_graph.nodes.wasm_plugin]
+plugin_id = "intent-classifier"
+timeout_ms = 20
+max_memory_bytes = 16777216
+granted_capabilities = ["log"]
+
+[[rule_graph.edges]]
+id = "intent-plugin-chat"
+source = "intent-plugin"
+source_handle = "chat"
+target = "select_model-8"
+
+[[rule_graph.edges]]
+id = "intent-plugin-default"
+source = "intent-plugin"
+source_handle = "default"
+target = "end-7"
+```
+
+这个 sample plugin 会：
+
+- 读取当前 `path`
+- 检查请求头 `x-intent`
+- 设置 `ctx.intent`
+- 返回 `chat` 或 `default` 分支
 
 ## 请求转发示例
 

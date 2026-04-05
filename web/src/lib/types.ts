@@ -53,6 +53,18 @@ export type GraphPosition = {
   y: number;
 };
 
+export type WasmCapability = "log" | "fs" | "network";
+
+export type WasmPluginManifestSummary = {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  supported_output_ports: string[];
+  capabilities: WasmCapability[];
+  default_config_schema_hints?: unknown | null;
+};
+
 export type RuleGraphNodeType =
   | "start"
   | "condition"
@@ -65,6 +77,7 @@ export type RuleGraphNodeType =
   | "remove_header"
   | "copy_header"
   | "set_header_if_absent"
+  | "wasm_plugin"
   | "note"
   | "end";
 
@@ -126,6 +139,17 @@ export type RuleGraphNode = {
   set_header_if_absent?: {
     name: string;
     value: string;
+  } | null;
+  wasm_plugin?: {
+    plugin_id: string;
+    timeout_ms: number;
+    fuel?: number | null;
+    max_memory_bytes: number;
+    granted_capabilities: WasmCapability[];
+    read_dirs: string[];
+    write_dirs: string[];
+    allowed_hosts: string[];
+    config: Record<string, unknown>;
   } | null;
   note_node?: {
     text: string;

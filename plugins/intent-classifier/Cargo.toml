@@ -1,0 +1,20 @@
+[package]
+name = "intent-classifier"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+wit-bindgen-rt = "0.41.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "proxy-tools:intent-classifier"
+
+[package.metadata.component.target]
+path = "wit"
+world = "proxy-node-plugin"
+
+[workspace]

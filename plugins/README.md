@@ -37,3 +37,31 @@ In practice:
 - Manifest capability declarations describe what the plugin needs.
 - Node-level capability grants describe what the host actually allows for that plugin instance.
 - Execution should fail closed when a declared capability is missing from the node grant set.
+
+Example node config:
+
+```toml
+[rule_graph.nodes.wasm_plugin]
+plugin_id = "intent-classifier"
+timeout_ms = 20
+fuel = 500000
+max_memory_bytes = 16777216
+granted_capabilities = ["fs", "network"]
+read_dirs = ["plugins-data/common"]
+write_dirs = ["plugins-data/runtime"]
+allowed_hosts = ["api.example.com:443"]
+
+[rule_graph.nodes.wasm_plugin.config]
+prompt = "classify request intent"
+default_intent = "chat"
+```
+
+The admin UI reads plugin metadata from `/admin/plugins` and uses these manifest fields:
+
+- `id`
+- `name`
+- `version`
+- `description`
+- `supported_output_ports`
+- `capabilities`
+- `default_config_schema_hints`

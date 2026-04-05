@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::routing::{any, get, post};
-use axum::{Extension, Router};
 use clap::{Args, Parser, Subcommand};
 use proxy_tools::admin_api::{
-    AdminState, get_config, put_config, reload_config, validate_config_handler,
+    AdminState, get_config, get_plugins, put_config, reload_config, validate_config_handler,
 };
 use proxy_tools::config::load_config;
 use proxy_tools::crypto::encrypt_header_value;
@@ -77,25 +77,26 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let gateway_state = GatewayState {
         client: Client::builder().build()?,
         config: shared_config.clone(),
+        plugin_registry: plugin_registry.clone(),
     };
     let admin_state = AdminState {
         config: shared_config.clone(),
         config_path: cli.config.clone(),
+        plugin_registry: plugin_registry.clone(),
     };
     let gateway_app = Router::new()
         .route("/", any(proxy_request))
         .route("/{*rest}", any(proxy_request))
-        .with_state(gateway_state)
-        .layer(Extension(plugin_registry.clone()));
+        .with_state(gateway_state);
 
     let admin_app = Router::new()
         .route("/admin/ui", get(panel_index))
         .route("/admin/ui/{*path}", get(panel_asset))
         .route("/admin/config", get(get_config).put(put_config))
+        .route("/admin/plugins", get(get_plugins))
         .route("/admin/validate", post(validate_config_handler))
         .route("/admin/reload", post(reload_config))
-        .with_state(admin_state)
-        .layer(Extension(plugin_registry));
+        .with_state(admin_state);
 
     let gateway_listener = TcpListener::bind(gateway_addr).await?;
     let admin_listener = TcpListener::bind(admin_addr).await?;
@@ -210,7 +211,10 @@ mod tests {
             .expect("config file should be writable");
 
         let resolved = resolve_plugins_root(&config_path).expect("plugins root should resolve");
-        assert_eq!(resolved, plugins_dir);
+        assert_eq!(
+            fs::canonicalize(&resolved).expect("resolved path should canonicalize"),
+            fs::canonicalize(&plugins_dir).expect("plugins dir should canonicalize")
+        );
     }
 
     #[test]

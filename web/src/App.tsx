@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { CircleOff, Plus, RefreshCw, Save, Settings2, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { emptyConfig, type GatewayConfig } from "@/lib/types";
+import { emptyConfig, type GatewayConfig, type WasmPluginManifestSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 
 export default function App() {
   const [config, setConfig] = useState<GatewayConfig>(emptyConfig);
+  const [pluginManifests, setPluginManifests] = useState<WasmPluginManifestSummary[]>([]);
   const [status, setStatus] = useState("Loading...");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -39,7 +40,9 @@ export default function App() {
     setBusy(true);
     try {
       const next = await api.getConfig();
+      const nextPlugins = await api.getPlugins();
       setConfig(next);
+      setPluginManifests(nextPlugins);
       setStatus("Config loaded from admin API.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to load config.");
@@ -106,7 +109,11 @@ export default function App() {
         </header>
 
         <main className="flex-1 px-3 pb-3 pt-2 lg:px-4">
-          <RuleGraphEditor config={config} setConfig={setConfig} />
+          <RuleGraphEditor
+            config={config}
+            setConfig={setConfig}
+            pluginManifests={pluginManifests}
+          />
         </main>
 
         <SettingsModal

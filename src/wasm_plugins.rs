@@ -249,6 +249,7 @@ fn build_component_engine() -> PluginResult<Engine> {
     let mut config = WasmtimeConfig::new();
     config.wasm_component_model(true);
     config.consume_fuel(true);
+    config.epoch_interruption(true);
     Engine::new(&config).map_err(Into::into)
 }
 

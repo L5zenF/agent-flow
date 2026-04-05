@@ -1,0 +1,9 @@
+id = "intent-classifier"
+name = "Intent Classifier"
+version = "0.1.0"
+description = "Classifies simple request intent from path and headers."
+supported_output_ports = ["chat", "default"]
+capabilities = ["log"]
+
+[default_config_schema_hints]
+prompt = "Optional free-form prompt for future custom classification rules."
