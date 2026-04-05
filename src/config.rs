@@ -442,6 +442,8 @@ pub fn validate_config(config: &GatewayConfig) -> Result<(), Box<dyn std::error:
         }
     }
 
+    validate_workflow_index(config)?;
+
     if let Some(graph) = &config.rule_graph {
         validate_rule_graph(graph, &provider_ids, &model_ids, &config.models)?;
     }
@@ -548,7 +550,7 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
 
     if route_nodes_to_remove.is_empty() {
         config.rule_graph = Some(graph);
-        return normalize_legacy_workflow_index(config);
+        return synthesize_legacy_workflow_index(config);
     }
 
     let updated_node_ids = updated_nodes
@@ -572,10 +574,10 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
             .collect(),
         ..graph
     });
-    normalize_legacy_workflow_index(config)
+    synthesize_legacy_workflow_index(config)
 }
 
-fn normalize_legacy_workflow_index(mut config: GatewayConfig) -> GatewayConfig {
+fn synthesize_legacy_workflow_index(mut config: GatewayConfig) -> GatewayConfig {
     if config.rule_graph.is_some() && config.workflows.is_empty() {
         config.workflows_dir = Some("workflows".to_string());
         config.active_workflow_id = Some("default".to_string());
@@ -585,10 +587,37 @@ fn normalize_legacy_workflow_index(mut config: GatewayConfig) -> GatewayConfig {
             file: "default.toml".to_string(),
             description: Some("Migrated from legacy rule_graph".to_string()),
         }];
-        config.rule_graph = None;
     }
 
     config
+}
+
+fn validate_workflow_index(config: &GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow_ids = unique_ids(
+        config.workflows.iter().map(|workflow| workflow.id.as_str()),
+        "workflow",
+    )?;
+
+    for workflow in &config.workflows {
+        if workflow.file.trim().is_empty() {
+            return Err(format!("workflow '{}' file cannot be empty", workflow.id).into());
+        }
+    }
+
+    if !config.workflows.is_empty() {
+        let Some(active_workflow_id) = config.active_workflow_id.as_deref() else {
+            return Err("active_workflow_id must be set when workflows are present".into());
+        };
+        if !workflow_ids.contains(active_workflow_id) {
+            return Err(format!(
+                "active_workflow_id '{}' does not reference an indexed workflow",
+                active_workflow_id
+            )
+            .into());
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_rule_graph(
@@ -1411,7 +1440,83 @@ description = "Main chat flow"
         let normalized = normalize_legacy_rule_graph(legacy);
         assert_eq!(normalized.active_workflow_id.as_deref(), Some("default"));
         assert_eq!(normalized.workflows.len(), 1);
-        assert!(normalized.rule_graph.is_none());
+        assert!(normalized.rule_graph.is_some());
+        assert_eq!(normalized.workflows_dir.as_deref(), Some("workflows"));
+        let graph = normalized
+            .rule_graph
+            .expect("graph should remain available");
+        assert_eq!(graph.start_node_id, "start");
+    }
+
+    #[test]
+    fn rejects_duplicate_workflow_ids() {
+        let invalid = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = "default.toml"
+
+[[workflows]]
+id = "default"
+name = "Duplicate"
+file = "duplicate.toml"
+"#;
+
+        let error = parse_config(invalid).expect_err("duplicate workflow ids should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate workflow id 'default'"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_workflow_file() {
+        let invalid = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = ""
+"#;
+
+        let error = parse_config(invalid).expect_err("empty workflow file should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("workflow 'default' file cannot be empty"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_active_workflow_id_without_match() {
+        let invalid = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+active_workflow_id = "missing"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = "default.toml"
+"#;
+
+        let error = parse_config(invalid).expect_err("missing active workflow should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("active_workflow_id 'missing' does not reference an indexed workflow"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
