@@ -105,7 +105,9 @@ pub enum HeaderValueConfig {
         #[serde(default)]
         secret_env: Option<String>,
     },
-    Plain { value: String },
+    Plain {
+        value: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +153,8 @@ pub struct RuleGraphNode {
     pub set_header_if_absent: Option<HeaderMutationNodeConfig>,
     #[serde(default)]
     pub note_node: Option<NoteNodeConfig>,
+    #[serde(default)]
+    pub wasm_plugin: Option<WasmPluginNodeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +187,7 @@ pub enum RuleGraphNodeType {
     RemoveHeader,
     CopyHeader,
     SetHeaderIfAbsent,
+    WasmPlugin,
     Note,
     End,
 }
@@ -284,6 +289,35 @@ pub struct NoteNodeConfig {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum WasmCapability {
+    Log,
+    Fs,
+    Network,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WasmPluginNodeConfig {
+    pub plugin_id: String,
+    #[serde(default = "default_wasm_plugin_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub fuel: Option<u64>,
+    #[serde(default)]
+    pub max_memory_bytes: Option<u64>,
+    #[serde(default)]
+    pub granted_capabilities: Vec<WasmCapability>,
+    #[serde(default)]
+    pub read_dirs: Vec<String>,
+    #[serde(default)]
+    pub write_dirs: Vec<String>,
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+    #[serde(default)]
+    pub config: toml::value::Table,
+}
+
 pub fn load_config(path: &Path) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     parse_config(&raw)
@@ -383,7 +417,9 @@ pub fn validate_config(config: &GatewayConfig) -> Result<(), Box<dyn std::error:
         }
 
         if rule.actions.is_empty() {
-            return Err(format!("header_rule '{}' must contain at least one action", rule.id).into());
+            return Err(
+                format!("header_rule '{}' must contain at least one action", rule.id).into(),
+            );
         }
     }
 
@@ -405,20 +441,20 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
 
-    let incoming_edges = graph
-        .edges
-        .iter()
-        .fold(HashMap::<&str, Vec<&RuleGraphEdge>>::new(), |mut acc, edge| {
+    let incoming_edges = graph.edges.iter().fold(
+        HashMap::<&str, Vec<&RuleGraphEdge>>::new(),
+        |mut acc, edge| {
             acc.entry(edge.target.as_str()).or_default().push(edge);
             acc
-        });
-    let outgoing_edges = graph
-        .edges
-        .iter()
-        .fold(HashMap::<&str, Vec<&RuleGraphEdge>>::new(), |mut acc, edge| {
+        },
+    );
+    let outgoing_edges = graph.edges.iter().fold(
+        HashMap::<&str, Vec<&RuleGraphEdge>>::new(),
+        |mut acc, edge| {
             acc.entry(edge.source.as_str()).or_default().push(edge);
             acc
-        });
+        },
+    );
 
     let mut route_nodes_to_remove = HashSet::<String>::new();
     let mut updated_nodes = Vec::with_capacity(graph.nodes.len());
@@ -511,7 +547,8 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
         edges: rewritten_edges
             .into_iter()
             .filter(|edge| {
-                !route_nodes_to_remove.contains(&edge.source) && !route_nodes_to_remove.contains(&edge.target)
+                !route_nodes_to_remove.contains(&edge.source)
+                    && !route_nodes_to_remove.contains(&edge.target)
             })
             .collect(),
         ..graph
@@ -529,8 +566,14 @@ fn validate_rule_graph(
         return Err("rule_graph start_node_id cannot be empty".into());
     }
 
-    let node_ids = unique_ids(graph.nodes.iter().map(|node| node.id.as_str()), "rule_graph node")?;
-    unique_ids(graph.edges.iter().map(|edge| edge.id.as_str()), "rule_graph edge")?;
+    let node_ids = unique_ids(
+        graph.nodes.iter().map(|node| node.id.as_str()),
+        "rule_graph node",
+    )?;
+    unique_ids(
+        graph.edges.iter().map(|edge| edge.id.as_str()),
+        "rule_graph edge",
+    )?;
 
     if !node_ids.contains(graph.start_node_id.as_str()) {
         return Err(format!(
@@ -546,15 +589,25 @@ fn validate_rule_graph(
         .filter(|node| node.node_type == RuleGraphNodeType::Start)
         .count();
     if start_count != 1 {
-        return Err(format!("rule_graph requires exactly one start node, found {start_count}").into());
+        return Err(
+            format!("rule_graph requires exactly one start node, found {start_count}").into(),
+        );
     }
 
     for edge in &graph.edges {
         if !node_ids.contains(edge.source.as_str()) {
-            return Err(format!("rule_graph edge '{}' missing source '{}'", edge.id, edge.source).into());
+            return Err(format!(
+                "rule_graph edge '{}' missing source '{}'",
+                edge.id, edge.source
+            )
+            .into());
         }
         if !node_ids.contains(edge.target.as_str()) {
-            return Err(format!("rule_graph edge '{}' missing target '{}'", edge.id, edge.target).into());
+            return Err(format!(
+                "rule_graph edge '{}' missing target '{}'",
+                edge.id, edge.target
+            )
+            .into());
         }
     }
 
@@ -578,11 +631,19 @@ fn validate_rule_graph_node(
         RuleGraphNodeType::Start | RuleGraphNodeType::End | RuleGraphNodeType::Note => {}
         RuleGraphNodeType::Condition => {
             let Some(condition) = &node.condition else {
-                return Err(format!("rule_graph node '{}' missing condition config", node.id).into());
+                return Err(
+                    format!("rule_graph node '{}' missing condition config", node.id).into(),
+                );
             };
             match condition.mode {
                 ConditionMode::Expression => {
-                    if condition.expression.as_deref().unwrap_or("").trim().is_empty() {
+                    if condition
+                        .expression
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim()
+                        .is_empty()
+                    {
                         return Err(format!(
                             "rule_graph condition node '{}' requires expression",
                             node.id
@@ -610,7 +671,11 @@ fn validate_rule_graph_node(
                     }
                 }
             }
-            let outgoing = graph.edges.iter().filter(|edge| edge.source == node.id).count();
+            let outgoing = graph
+                .edges
+                .iter()
+                .filter(|edge| edge.source == node.id)
+                .count();
             if outgoing > 2 {
                 return Err(format!(
                     "rule_graph condition node '{}' supports at most 2 outgoing edges",
@@ -621,7 +686,11 @@ fn validate_rule_graph_node(
         }
         RuleGraphNodeType::RouteProvider => {
             let Some(config) = &node.route_provider else {
-                return Err(format!("rule_graph node '{}' missing route_provider config", node.id).into());
+                return Err(format!(
+                    "rule_graph node '{}' missing route_provider config",
+                    node.id
+                )
+                .into());
             };
             if !provider_ids.contains(config.provider_id.as_str()) {
                 return Err(format!(
@@ -633,7 +702,9 @@ fn validate_rule_graph_node(
         }
         RuleGraphNodeType::SelectModel => {
             let Some(config) = &node.select_model else {
-                return Err(format!("rule_graph node '{}' missing select_model config", node.id).into());
+                return Err(
+                    format!("rule_graph node '{}' missing select_model config", node.id).into(),
+                );
             };
             if !provider_ids.contains(config.provider_id.as_str()) {
                 return Err(format!(
@@ -666,15 +737,30 @@ fn validate_rule_graph_node(
                 .into());
             }
         }
-        RuleGraphNodeType::RewritePath => validate_value_node(node.id.as_str(), node.rewrite_path.as_ref())?,
-        RuleGraphNodeType::SetContext => validate_set_context_node(node.id.as_str(), node.set_context.as_ref())?,
-        RuleGraphNodeType::Router => validate_router_node(node.id.as_str(), graph, node.router.as_ref())?,
+        RuleGraphNodeType::RewritePath => {
+            validate_value_node(node.id.as_str(), node.rewrite_path.as_ref())?
+        }
+        RuleGraphNodeType::SetContext => {
+            validate_set_context_node(node.id.as_str(), node.set_context.as_ref())?
+        }
+        RuleGraphNodeType::Router => {
+            validate_router_node(node.id.as_str(), graph, node.router.as_ref())?
+        }
         RuleGraphNodeType::Log => validate_log_node(node.id.as_str(), node.log.as_ref())?,
-        RuleGraphNodeType::SetHeader => validate_header_mutation_node(node.id.as_str(), node.set_header.as_ref())?,
-        RuleGraphNodeType::RemoveHeader => validate_header_name_node(node.id.as_str(), node.remove_header.as_ref())?,
-        RuleGraphNodeType::CopyHeader => validate_copy_header_node(node.id.as_str(), node.copy_header.as_ref())?,
+        RuleGraphNodeType::SetHeader => {
+            validate_header_mutation_node(node.id.as_str(), node.set_header.as_ref())?
+        }
+        RuleGraphNodeType::RemoveHeader => {
+            validate_header_name_node(node.id.as_str(), node.remove_header.as_ref())?
+        }
+        RuleGraphNodeType::CopyHeader => {
+            validate_copy_header_node(node.id.as_str(), node.copy_header.as_ref())?
+        }
         RuleGraphNodeType::SetHeaderIfAbsent => {
             validate_header_mutation_node(node.id.as_str(), node.set_header_if_absent.as_ref())?
+        }
+        RuleGraphNodeType::WasmPlugin => {
+            validate_wasm_plugin_node(node.id.as_str(), node.wasm_plugin.as_ref())?
         }
     }
 
@@ -705,7 +791,9 @@ fn validate_set_context_node(
         return Err(format!("rule_graph node '{node_id}' context key cannot be empty").into());
     }
     if config.value_template.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' context value_template cannot be empty").into());
+        return Err(
+            format!("rule_graph node '{node_id}' context value_template cannot be empty").into(),
+        );
     }
     Ok(())
 }
@@ -719,34 +807,66 @@ fn validate_router_node(
         return Err(format!("rule_graph node '{node_id}' missing router config").into());
     };
     if config.rules.is_empty() {
-        return Err(format!("rule_graph node '{node_id}' must define at least one router rule").into());
+        return Err(
+            format!("rule_graph node '{node_id}' must define at least one router rule").into(),
+        );
     }
 
-    let node_ids = graph.nodes.iter().map(|node| node.id.as_str()).collect::<HashSet<_>>();
+    let node_ids = graph
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<HashSet<_>>();
     let mut rule_ids = HashSet::new();
     for rule in &config.rules {
         if rule.id.trim().is_empty() {
-            return Err(format!("rule_graph node '{node_id}' contains a router rule with empty id").into());
+            return Err(format!(
+                "rule_graph node '{node_id}' contains a router rule with empty id"
+            )
+            .into());
         }
         if !rule_ids.insert(rule.id.as_str()) {
-            return Err(format!("rule_graph node '{node_id}' has duplicate router rule id '{}'", rule.id).into());
+            return Err(format!(
+                "rule_graph node '{node_id}' has duplicate router rule id '{}'",
+                rule.id
+            )
+            .into());
         }
         if rule.clauses.is_empty() {
-            return Err(format!("rule_graph node '{node_id}' router rule '{}' must contain at least one clause", rule.id).into());
+            return Err(format!(
+                "rule_graph node '{node_id}' router rule '{}' must contain at least one clause",
+                rule.id
+            )
+            .into());
         }
-        if rule.target_node_id.trim().is_empty() || !node_ids.contains(rule.target_node_id.as_str()) {
-            return Err(format!("rule_graph node '{node_id}' router rule '{}' references missing target '{}'", rule.id, rule.target_node_id).into());
+        if rule.target_node_id.trim().is_empty() || !node_ids.contains(rule.target_node_id.as_str())
+        {
+            return Err(format!(
+                "rule_graph node '{node_id}' router rule '{}' references missing target '{}'",
+                rule.id, rule.target_node_id
+            )
+            .into());
         }
         for clause in &rule.clauses {
-            if clause.source.trim().is_empty() || clause.operator.trim().is_empty() || clause.value.trim().is_empty() {
-                return Err(format!("rule_graph node '{node_id}' router rule '{}' contains an incomplete clause", rule.id).into());
+            if clause.source.trim().is_empty()
+                || clause.operator.trim().is_empty()
+                || clause.value.trim().is_empty()
+            {
+                return Err(format!(
+                    "rule_graph node '{node_id}' router rule '{}' contains an incomplete clause",
+                    rule.id
+                )
+                .into());
             }
         }
     }
 
     if let Some(fallback) = config.fallback_node_id.as_deref() {
         if fallback.trim().is_empty() || !node_ids.contains(fallback) {
-            return Err(format!("rule_graph node '{node_id}' references missing fallback target '{fallback}'").into());
+            return Err(format!(
+                "rule_graph node '{node_id}' references missing fallback target '{fallback}'"
+            )
+            .into());
         }
     }
 
@@ -774,7 +894,9 @@ fn validate_header_mutation_node(
         return Err(format!("rule_graph node '{node_id}' missing header config").into());
     };
     if config.name.trim().is_empty() || config.value.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' header name/value cannot be empty").into());
+        return Err(
+            format!("rule_graph node '{node_id}' header name/value cannot be empty").into(),
+        );
     }
     Ok(())
 }
@@ -800,8 +922,126 @@ fn validate_copy_header_node(
         return Err(format!("rule_graph node '{node_id}' missing copy_header config").into());
     };
     if config.from.trim().is_empty() || config.to.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' copy header fields cannot be empty").into());
+        return Err(
+            format!("rule_graph node '{node_id}' copy header fields cannot be empty").into(),
+        );
     }
+    Ok(())
+}
+
+fn validate_wasm_plugin_node(
+    node_id: &str,
+    config: Option<&WasmPluginNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing wasm_plugin config").into());
+    };
+    if config.plugin_id.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' plugin_id cannot be empty").into());
+    }
+    if config.timeout_ms == 0 {
+        return Err(
+            format!("rule_graph node '{node_id}' timeout_ms must be greater than zero").into(),
+        );
+    }
+    if matches!(config.fuel, Some(0)) {
+        return Err(
+            format!("rule_graph node '{node_id}' fuel must be greater than zero when set").into(),
+        );
+    }
+    if matches!(config.max_memory_bytes, Some(0)) {
+        return Err(format!(
+            "rule_graph node '{node_id}' max_memory_bytes must be greater than zero when set"
+        )
+        .into());
+    }
+
+    let grants = config
+        .granted_capabilities
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let has_fs = grants.contains(&WasmCapability::Fs);
+    let has_network = grants.contains(&WasmCapability::Network);
+
+    if has_fs {
+        if config.read_dirs.is_empty() && config.write_dirs.is_empty() {
+            return Err(format!(
+                "rule_graph node '{node_id}' fs capability requires read_dirs or write_dirs"
+            )
+            .into());
+        }
+    } else if !config.read_dirs.is_empty() || !config.write_dirs.is_empty() {
+        return Err(format!(
+            "rule_graph node '{node_id}' fs directories require an fs capability grant"
+        )
+        .into());
+    }
+
+    validate_wasm_plugin_paths(node_id, "read_dirs", &config.read_dirs)?;
+    validate_wasm_plugin_paths(node_id, "write_dirs", &config.write_dirs)?;
+
+    if has_network {
+        if config.allowed_hosts.is_empty() {
+            return Err(format!(
+                "rule_graph node '{node_id}' network capability requires allowed_hosts"
+            )
+            .into());
+        }
+    } else if !config.allowed_hosts.is_empty() {
+        return Err(format!(
+            "rule_graph node '{node_id}' allowed_hosts require a network capability grant"
+        )
+        .into());
+    }
+
+    validate_wasm_plugin_hosts(node_id, &config.allowed_hosts)?;
+
+    Ok(())
+}
+
+fn validate_wasm_plugin_paths(
+    node_id: &str,
+    field: &str,
+    paths: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    for path in paths {
+        if path.trim().is_empty() {
+            return Err(
+                format!("rule_graph node '{node_id}' {field} cannot contain empty paths").into(),
+            );
+        }
+        if Path::new(path).is_absolute() {
+            return Err(
+                format!("rule_graph node '{node_id}' {field} must use relative paths").into(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_wasm_plugin_hosts(
+    node_id: &str,
+    hosts: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if hosts.is_empty() {
+        return Ok(());
+    }
+
+    for host in hosts {
+        if host.trim().is_empty() {
+            return Err(format!(
+                "rule_graph node '{node_id}' allowed_hosts cannot contain empty hosts"
+            )
+            .into());
+        }
+    }
+
     Ok(())
 }
 
@@ -831,7 +1071,12 @@ fn validate_rule_graph_acyclic(graph: &RuleGraphConfig) -> Result<(), Box<dyn st
         Ok(())
     }
 
-    visit(graph.start_node_id.as_str(), graph, &mut visiting, &mut visited)
+    visit(
+        graph.start_node_id.as_str(),
+        graph,
+        &mut visiting,
+        &mut visited,
+    )
 }
 
 fn validate_rule_target(
@@ -883,6 +1128,10 @@ fn default_admin_listen() -> String {
 }
 
 fn default_rule_graph_version() -> u32 {
+    1
+}
+
+fn default_wasm_plugin_timeout_ms() -> u64 {
     1
 }
 
@@ -982,6 +1231,59 @@ source = "provider-kimi"
 target = "end"
 "#;
 
+    const VALID_WASM_PLUGIN_CONFIG: &str = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "plugin"
+type = "wasm_plugin"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.wasm_plugin]
+plugin_id = "intent-classifier"
+timeout_ms = 25
+fuel = 500000
+max_memory_bytes = 16777216
+granted_capabilities = ["fs", "network"]
+read_dirs = ["plugins-data/common"]
+write_dirs = ["plugins-data/runtime"]
+allowed_hosts = ["api.example.com:443"]
+
+[rule_graph.nodes.wasm_plugin.config]
+prompt = "classify request intent"
+default_intent = "chat"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 240.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "edge-1"
+source = "start"
+target = "plugin"
+
+[[rule_graph.edges]]
+id = "edge-2"
+source = "plugin"
+target = "end"
+"#;
+
     #[test]
     fn parses_structured_gateway_config() {
         let config = parse_config(VALID_CONFIG).expect("valid config should parse");
@@ -1060,7 +1362,10 @@ target = "end"
         let config = parse_config(&legacy).expect("legacy config should normalize");
         let graph = config.rule_graph.expect("graph should exist");
 
-        assert!(graph.nodes.iter().all(|node| node.node_type != RuleGraphNodeType::RouteProvider));
+        assert!(graph
+            .nodes
+            .iter()
+            .all(|node| node.node_type != RuleGraphNodeType::RouteProvider));
         let select_model = graph
             .nodes
             .iter()
@@ -1070,7 +1375,10 @@ target = "end"
         assert_eq!(select_model.provider_id, "kimi");
         assert_eq!(select_model.model_id, "kimi-k2");
         assert!(
-            graph.edges.iter().any(|edge| edge.source == "start" && edge.target == "model-kimi"),
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.source == "start" && edge.target == "model-kimi"),
             "incoming edge should be rewired to the merged select_model node"
         );
     }
@@ -1111,5 +1419,89 @@ target = "end"
             error.to_string().contains("contains a cycle"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn parses_wasm_plugin_node() {
+        let config =
+            parse_config(VALID_WASM_PLUGIN_CONFIG).expect("wasm plugin config should parse");
+        let graph = config.rule_graph.expect("graph should exist");
+        let node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "plugin")
+            .expect("plugin node should exist");
+
+        assert_eq!(node.node_type, RuleGraphNodeType::WasmPlugin);
+        let plugin = node
+            .wasm_plugin
+            .as_ref()
+            .expect("wasm plugin config should exist");
+        assert_eq!(plugin.plugin_id, "intent-classifier");
+        assert_eq!(plugin.timeout_ms, 25);
+        assert_eq!(plugin.fuel, Some(500000));
+        assert_eq!(plugin.max_memory_bytes, Some(16_777_216));
+        assert_eq!(plugin.granted_capabilities.len(), 2);
+        assert_eq!(plugin.read_dirs, vec!["plugins-data/common"]);
+        assert_eq!(plugin.write_dirs, vec!["plugins-data/runtime"]);
+        assert_eq!(plugin.allowed_hosts, vec!["api.example.com:443"]);
+        assert_eq!(
+            plugin.config.get("prompt").and_then(|value| value.as_str()),
+            Some("classify request intent")
+        );
+        assert_eq!(
+            plugin
+                .config
+                .get("default_intent")
+                .and_then(|value| value.as_str()),
+            Some("chat")
+        );
+    }
+
+    #[test]
+    fn rejects_missing_plugin_id() {
+        let invalid = VALID_WASM_PLUGIN_CONFIG.replace("plugin_id = \"intent-classifier\"\n", "");
+        let error = parse_config(&invalid).expect_err("missing plugin_id should fail");
+
+        assert!(
+            error.to_string().contains("missing field `plugin_id`"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_network_grant_without_allowed_hosts() {
+        let invalid = VALID_WASM_PLUGIN_CONFIG.replace(
+            "allowed_hosts = [\"api.example.com:443\"]\n",
+            "allowed_hosts = []\n",
+        );
+        let error =
+            parse_config(&invalid).expect_err("network grant without allowed hosts should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("network capability requires allowed_hosts"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn accepts_valid_per_node_capability_grants() {
+        let config =
+            parse_config(VALID_WASM_PLUGIN_CONFIG).expect("valid capability grants should parse");
+        let plugin = config
+            .rule_graph
+            .expect("graph should exist")
+            .nodes
+            .into_iter()
+            .find(|node| node.id == "plugin")
+            .and_then(|node| node.wasm_plugin)
+            .expect("plugin node should exist");
+
+        assert_eq!(plugin.granted_capabilities.len(), 2);
+        assert_eq!(plugin.read_dirs, vec!["plugins-data/common"]);
+        assert_eq!(plugin.write_dirs, vec!["plugins-data/runtime"]);
+        assert_eq!(plugin.allowed_hosts, vec!["api.example.com:443"]);
     }
 }
