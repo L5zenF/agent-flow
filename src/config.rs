@@ -550,7 +550,7 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
 
     if route_nodes_to_remove.is_empty() {
         config.rule_graph = Some(graph);
-        return synthesize_legacy_workflow_index(config);
+        return normalize_workflow_index_inputs(synthesize_legacy_workflow_index(config));
     }
 
     let updated_node_ids = updated_nodes
@@ -1481,6 +1481,72 @@ file = " default.toml "
 
         assert_eq!(config.workflows_dir.as_deref(), Some("workflows"));
         assert_eq!(config.workflows[0].file, "default.toml");
+    }
+
+    #[test]
+    fn normalizes_workflow_index_inputs_for_legacy_rule_graph_configs() {
+        let normalized = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+workflows_dir = " workflows "
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = " default.toml "
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+"#,
+        )
+        .expect("legacy config should normalize");
+
+        assert_eq!(normalized.workflows_dir.as_deref(), Some("workflows"));
+        assert_eq!(normalized.workflows[0].file, "default.toml");
+
+        let duplicate = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+workflows_dir = " workflows "
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = " default.toml "
+
+[[workflows]]
+id = "secondary"
+name = "Secondary"
+file = " default.toml "
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+"#,
+        )
+        .expect_err("duplicate workflow files should fail after trimming");
+
+        assert!(
+            duplicate
+                .to_string()
+                .contains("duplicate workflow file 'default.toml'"),
+            "unexpected error: {duplicate}"
+        );
     }
 
     #[test]
