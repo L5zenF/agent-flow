@@ -4,57 +4,66 @@ world proxy-node-plugin {
   export execute: func(input: execute-input) -> result<execute-output, execute-error>;
 }
 
-type header-name = string;
-type header-value = string;
-
-record header-op {
-  name: header-name,
-  value: option<header-value>,
+record request-header {
+  name: string,
+  value: string,
 }
 
-variant header-op-kind {
-  set(header-op),
-  append(header-op),
-  remove(header-name),
+record context-entry {
+  key: string,
+  value: string,
 }
 
-record request-info {
-  method: string,
-  uri: string,
-  headers: list<header-op>,
-  body: option<list<u8>>,
+record node-config-entry {
+  key: string,
+  value: string,
 }
 
-record response-info {
-  status: option<u16>,
-  headers: list<header-op>,
-  body: option<list<u8>>,
+variant context-patch-op {
+  set(context-entry),
+  remove(string),
 }
 
-record patch-target {
-  request: option<request-info>,
-  response: option<response-info>,
+record context-patch {
+  ops: list<context-patch-op>,
 }
 
-variant patch {
-  target(patch-target),
-  header(header-op-kind),
-  set-status(u16),
-  set-body(list<u8>),
+variant header-op {
+  set(request-header),
+  append(request-header),
+  remove(string),
+}
+
+record path-rewrite {
+  path: string,
+}
+
+record next-port {
+  port: string,
+}
+
+variant log-level {
+  debug,
+  info,
+  warn,
+  error,
+}
+
+record log-entry {
+  level: log-level,
+  message: string,
 }
 
 variant capability-kind {
+  log,
+  fs,
   network,
-  filesystem,
-  environment,
-  secrets,
-  logging,
-  custom(string),
 }
 
 record capability-declaration {
   kind: capability-kind,
   required: bool,
+  scope: option<string>,
   description: string,
 }
 
@@ -64,23 +73,38 @@ record capability-grant {
   scope: option<string>,
 }
 
-record plugin-metadata {
-  plugin-id: string,
-  plugin-version: string,
-  manifest-capabilities: list<capability-declaration>,
-  node-capabilities: list<capability-grant>,
+record plugin-manifest {
+  id: string,
+  name: string,
+  version: string,
+  description: string,
+  supported-output-ports: list<string>,
+  default-config-schema-hints: option<string>,
+  capabilities: list<capability-declaration>,
+}
+
+record node-config {
+  manifest: plugin-manifest,
+  grants: list<capability-grant>,
+  entries: list<node-config-entry>,
 }
 
 record execute-input {
-  metadata: plugin-metadata,
-  request: request-info,
-  response: option<response-info>,
-  patches: list<patch>,
+  request-method: string,
+  current-path: string,
+  request-headers: list<request-header>,
+  workflow-context: list<context-entry>,
+  selected-provider-id: string,
+  selected-model-id: string,
+  node-config: node-config,
 }
 
 record execute-output {
-  patches: list<patch>,
-  metadata: plugin-metadata,
+  context-patch: option<context-patch>,
+  header-ops: list<header-op>,
+  path-rewrite: option<path-rewrite>,
+  next-port: option<next-port>,
+  logs: list<log-entry>,
 }
 
 variant execute-error {

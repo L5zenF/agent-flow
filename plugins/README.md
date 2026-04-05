@@ -5,9 +5,19 @@ Local wasm plugins live under `plugins/<plugin-id>/`.
 Each plugin directory should contain:
 
 - `plugin.toml` for the package manifest and metadata.
-- `plugin.wasm` for the compiled component or module artifact.
+- `plugin.wasm` for the compiled WebAssembly component that implements the `proxy-node-plugin` world.
 
-The manifest should declare the capabilities the plugin expects to use. Keep those declarations narrow and explicit so the host can validate them before execution.
+`plugin.toml` must declare these required fields:
+
+- `id`
+- `name`
+- `version`
+- `description`
+- `supported_output_ports`
+
+It may also include `default_config_schema_hints` when the plugin wants to describe the shape of its expected node config.
+
+The manifest should also declare the capabilities the plugin expects to use. Keep those declarations narrow and explicit so the host can validate them before execution.
 
 The node that loads the plugin also needs to grant the capabilities it is willing to expose. Those node-level grants should be treated as the runtime allowlist for the manifest declarations.
 
