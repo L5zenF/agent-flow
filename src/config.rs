@@ -579,8 +579,12 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
 
 fn synthesize_legacy_workflow_index(mut config: GatewayConfig) -> GatewayConfig {
     if config.rule_graph.is_some() && config.workflows.is_empty() {
-        config.workflows_dir = Some("workflows".to_string());
-        config.active_workflow_id = Some("default".to_string());
+        config
+            .workflows_dir
+            .get_or_insert_with(|| "workflows".to_string());
+        config
+            .active_workflow_id
+            .get_or_insert_with(|| "default".to_string());
         config.workflows = vec![WorkflowIndexEntry {
             id: "default".to_string(),
             name: "Default Workflow".to_string(),
@@ -602,6 +606,7 @@ fn validate_workflow_index(config: &GatewayConfig) -> Result<(), Box<dyn std::er
         if workflow.file.trim().is_empty() {
             return Err(format!("workflow '{}' file cannot be empty", workflow.id).into());
         }
+        validate_workflow_file_path(&workflow.id, &workflow.file)?;
     }
 
     if !config.workflows.is_empty() {
@@ -615,6 +620,28 @@ fn validate_workflow_index(config: &GatewayConfig) -> Result<(), Box<dyn std::er
             )
             .into());
         }
+    }
+
+    Ok(())
+}
+
+fn validate_workflow_file_path(
+    workflow_id: &str,
+    file: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let file_path = Path::new(file);
+    if file_path.is_absolute() {
+        return Err(format!("workflow '{workflow_id}' file must use relative paths").into());
+    }
+    if file_path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir
+        )
+    }) {
+        return Err(
+            format!("workflow '{workflow_id}' file must not contain parent traversal").into(),
+        );
     }
 
     Ok(())
@@ -1449,6 +1476,58 @@ description = "Main chat flow"
     }
 
     #[test]
+    fn preserves_user_supplied_workflow_metadata_during_legacy_synthesis() {
+        let legacy = GatewayConfig {
+            listen: "127.0.0.1:9001".to_string(),
+            admin_listen: "127.0.0.1:9002".to_string(),
+            default_secret_env: None,
+            providers: Vec::new(),
+            models: Vec::new(),
+            routes: Vec::new(),
+            header_rules: Vec::new(),
+            rule_graph: Some(RuleGraphConfig {
+                version: 1,
+                start_node_id: "start".to_string(),
+                nodes: vec![RuleGraphNode {
+                    id: "start".to_string(),
+                    node_type: RuleGraphNodeType::Start,
+                    position: GraphPosition { x: 0.0, y: 0.0 },
+                    note: None,
+                    condition: None,
+                    route_provider: None,
+                    select_model: None,
+                    rewrite_path: None,
+                    set_context: None,
+                    router: None,
+                    log: None,
+                    set_header: None,
+                    remove_header: None,
+                    copy_header: None,
+                    set_header_if_absent: None,
+                    note_node: None,
+                    wasm_plugin: None,
+                }],
+                edges: Vec::new(),
+            }),
+            workflows_dir: Some("custom-workflows".to_string()),
+            active_workflow_id: Some("custom-active".to_string()),
+            workflows: Vec::new(),
+        };
+
+        let normalized = normalize_legacy_rule_graph(legacy);
+        assert_eq!(
+            normalized.workflows_dir.as_deref(),
+            Some("custom-workflows")
+        );
+        assert_eq!(
+            normalized.active_workflow_id.as_deref(),
+            Some("custom-active")
+        );
+        assert_eq!(normalized.workflows.len(), 1);
+        assert!(normalized.rule_graph.is_some());
+    }
+
+    #[test]
     fn rejects_duplicate_workflow_ids() {
         let invalid = r#"
 listen = "127.0.0.1:9001"
@@ -1493,6 +1572,50 @@ file = ""
             error
                 .to_string()
                 .contains("workflow 'default' file cannot be empty"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_workflow_file_path() {
+        let invalid = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = "/tmp/default.toml"
+"#;
+
+        let error = parse_config(invalid).expect_err("absolute workflow file should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("workflow 'default' file must use relative paths"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_parent_traversal_in_workflow_file() {
+        let invalid = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default"
+file = "../default.toml"
+"#;
+
+        let error = parse_config(invalid).expect_err("parent traversal should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("workflow 'default' file must not contain parent traversal"),
             "unexpected error: {error}"
         );
     }
