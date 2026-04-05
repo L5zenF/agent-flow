@@ -231,6 +231,42 @@ target = "end-7"
 - 设置 `ctx.intent`
 - 返回 `chat` 或 `default` 分支
 
+另一个更实用的 sample plugin 是 `plugins/remote-policy-router`。
+
+它会：
+
+- 读取本地 JSON 路由策略文件
+- 可选请求远端 HTTP JSON 做覆盖
+- 根据 `x-tenant` 之类的 header 或 path prefix 选择 `chat`、`embedding`、`moderation`、`default`
+- 设置 `ctx.route_key` 和 `ctx.policy_source`
+
+构建命令：
+
+```bash
+cd plugins/remote-policy-router
+CARGO_COMPONENT_CACHE_DIR=../../.cargo-component-cache cargo component build --release
+cp target/wasm32-wasip1/release/remote_policy_router.wasm plugin.wasm
+```
+
+示例节点配置：
+
+```toml
+[rule_graph.nodes.wasm_plugin]
+plugin_id = "remote-policy-router"
+timeout_ms = 50
+fuel = 1000000
+max_memory_bytes = 16777216
+granted_capabilities = ["fs", "network", "log"]
+read_dirs = ["plugins/remote-policy-router/examples"]
+allowed_hosts = ["127.0.0.1:9100"]
+
+[rule_graph.nodes.wasm_plugin.config]
+policy_file = "/plugins/remote-policy-router/examples/local-policy.json"
+policy_url = "http://127.0.0.1:9100/policy"
+match_header = "x-tenant"
+fallback_port = "default"
+```
+
 ## 请求转发示例
 
 按配置命中 route 后，客户端原样请求网关：

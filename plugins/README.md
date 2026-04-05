@@ -37,6 +37,8 @@ In practice:
 - Manifest capability declarations describe what the plugin needs.
 - Node-level capability grants describe what the host actually allows for that plugin instance.
 - Execution should fail closed when a declared capability is missing from the node grant set.
+- Keep `fs` access narrow by using relative paths inside granted read/write directories.
+- Keep `network` access narrow by limiting plugins to explicit hosts that return simple JSON payloads.
 
 Example node config:
 
@@ -65,3 +67,10 @@ The admin UI reads plugin metadata from `/admin/plugins` and uses these manifest
 - `supported_output_ports`
 - `capabilities`
 - `default_config_schema_hints`
+
+Included sample plugins:
+
+- `intent-classifier` for simple header and path-based branching.
+- `remote-policy-router` for local policy files plus optional remote JSON overrides.
+
+For file-based plugins, prefer guest paths that match the granted directory mount, for example `/plugins/remote-policy-router/examples/local-policy.json`.

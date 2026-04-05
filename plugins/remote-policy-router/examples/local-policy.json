@@ -1,0 +1,17 @@
+{
+  "header_routes": {
+    "tenant-chat": "chat",
+    "tenant-embed": "embedding"
+  },
+  "path_prefix_routes": [
+    {
+      "prefix": "/v1/moderations",
+      "port": "moderation"
+    },
+    {
+      "prefix": "/v1/embeddings",
+      "port": "embedding"
+    }
+  ],
+  "default_port": "default"
+}
