@@ -1,0 +1,90 @@
+package proxy-tools:proxy-node-plugin@0.1.0;
+
+world proxy-node-plugin {
+  export execute: func(input: execute-input) -> result<execute-output, execute-error>;
+}
+
+type header-name = string;
+type header-value = string;
+
+record header-op {
+  name: header-name,
+  value: option<header-value>,
+}
+
+variant header-op-kind {
+  set(header-op),
+  append(header-op),
+  remove(header-name),
+}
+
+record request-info {
+  method: string,
+  uri: string,
+  headers: list<header-op>,
+  body: option<list<u8>>,
+}
+
+record response-info {
+  status: option<u16>,
+  headers: list<header-op>,
+  body: option<list<u8>>,
+}
+
+record patch-target {
+  request: option<request-info>,
+  response: option<response-info>,
+}
+
+variant patch {
+  target(patch-target),
+  header(header-op-kind),
+  set-status(u16),
+  set-body(list<u8>),
+}
+
+variant capability-kind {
+  network,
+  filesystem,
+  environment,
+  secrets,
+  logging,
+  custom(string),
+}
+
+record capability-declaration {
+  kind: capability-kind,
+  required: bool,
+  description: string,
+}
+
+record capability-grant {
+  kind: capability-kind,
+  allowed: bool,
+  scope: option<string>,
+}
+
+record plugin-metadata {
+  plugin-id: string,
+  plugin-version: string,
+  manifest-capabilities: list<capability-declaration>,
+  node-capabilities: list<capability-grant>,
+}
+
+record execute-input {
+  metadata: plugin-metadata,
+  request: request-info,
+  response: option<response-info>,
+  patches: list<patch>,
+}
+
+record execute-output {
+  patches: list<patch>,
+  metadata: plugin-metadata,
+}
+
+variant execute-error {
+  denied(string),
+  invalid-input(string),
+  failed(string),
+}

@@ -23,3 +23,5 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+wasmtime = { version = "25.0.3", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "cache"] }
+wasmtime-wasi = { version = "25.0.3", default-features = false }
