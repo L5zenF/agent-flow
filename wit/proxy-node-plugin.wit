@@ -14,9 +14,8 @@ record context-entry {
   value: string,
 }
 
-record node-config-entry {
-  key: string,
-  value: string,
+record json-document {
+  json: string,
 }
 
 variant context-patch-op {
@@ -79,14 +78,14 @@ record plugin-manifest {
   version: string,
   description: string,
   supported-output-ports: list<string>,
-  default-config-schema-hints: option<string>,
+  default-config-schema-hints: option<json-document>,
   capabilities: list<capability-declaration>,
 }
 
 record node-config {
   manifest: plugin-manifest,
   grants: list<capability-grant>,
-  entries: list<node-config-entry>,
+  config: option<json-document>,
 }
 
 record execute-input {

@@ -15,7 +15,9 @@ Each plugin directory should contain:
 - `description`
 - `supported_output_ports`
 
-It may also include `default_config_schema_hints` when the plugin wants to describe the shape of its expected node config.
+It may also include `default_config_schema_hints` when the plugin wants to describe the shape of its expected node config. Treat that field as a JSON document rather than a free-form string so the shape can evolve without freezing the ABI.
+
+Node-specific plugin config should likewise be carried as a JSON document, not flattened into string key/value pairs. That keeps the first-pass ABI simple while leaving room for structured config and capability data later.
 
 The manifest should also declare the capabilities the plugin expects to use. Keep those declarations narrow and explicit so the host can validate them before execution.
 
