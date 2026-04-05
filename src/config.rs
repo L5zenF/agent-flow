@@ -21,6 +21,26 @@ pub struct GatewayConfig {
     pub header_rules: Vec<HeaderRuleConfig>,
     #[serde(default)]
     pub rule_graph: Option<RuleGraphConfig>,
+    #[serde(default)]
+    pub workflows_dir: Option<String>,
+    #[serde(default)]
+    pub active_workflow_id: Option<String>,
+    #[serde(default)]
+    pub workflows: Vec<WorkflowIndexEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowIndexEntry {
+    pub id: String,
+    pub name: String,
+    pub file: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowFileConfig {
+    pub workflow: RuleGraphConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -528,7 +548,7 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
 
     if route_nodes_to_remove.is_empty() {
         config.rule_graph = Some(graph);
-        return config;
+        return normalize_legacy_workflow_index(config);
     }
 
     let updated_node_ids = updated_nodes
@@ -552,6 +572,22 @@ pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
             .collect(),
         ..graph
     });
+    normalize_legacy_workflow_index(config)
+}
+
+fn normalize_legacy_workflow_index(mut config: GatewayConfig) -> GatewayConfig {
+    if config.rule_graph.is_some() && config.workflows.is_empty() {
+        config.workflows_dir = Some("workflows".to_string());
+        config.active_workflow_id = Some("default".to_string());
+        config.workflows = vec![WorkflowIndexEntry {
+            id: "default".to_string(),
+            name: "Default Workflow".to_string(),
+            file: "default.toml".to_string(),
+            description: Some("Migrated from legacy rule_graph".to_string()),
+        }];
+        config.rule_graph = None;
+    }
+
     config
 }
 
@@ -1152,7 +1188,10 @@ fn default_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_config, RuleGraphNodeType, RuleScope};
+    use super::{
+        GatewayConfig, GraphPosition, RuleGraphConfig, RuleGraphNode, RuleGraphNodeType, RuleScope,
+        normalize_legacy_rule_graph, parse_config,
+    };
 
     const VALID_CONFIG: &str = r#"
 listen = "127.0.0.1:9001"
@@ -1307,6 +1346,75 @@ target = "end"
     }
 
     #[test]
+    fn parses_workflow_index_metadata() {
+        let config = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+workflows_dir = "workflows"
+active_workflow_id = "chat-routing"
+
+[[workflows]]
+id = "chat-routing"
+name = "Chat Routing"
+file = "chat-routing.toml"
+description = "Main chat flow"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.workflows_dir.as_deref(), Some("workflows"));
+        assert_eq!(config.active_workflow_id.as_deref(), Some("chat-routing"));
+        assert_eq!(config.workflows.len(), 1);
+        assert_eq!(config.workflows[0].file, "chat-routing.toml");
+    }
+
+    #[test]
+    fn normalizes_legacy_rule_graph_into_default_workflow_index() {
+        let legacy = GatewayConfig {
+            listen: "127.0.0.1:9001".to_string(),
+            admin_listen: "127.0.0.1:9002".to_string(),
+            default_secret_env: None,
+            providers: Vec::new(),
+            models: Vec::new(),
+            routes: Vec::new(),
+            header_rules: Vec::new(),
+            rule_graph: Some(RuleGraphConfig {
+                version: 1,
+                start_node_id: "start".to_string(),
+                nodes: vec![RuleGraphNode {
+                    id: "start".to_string(),
+                    node_type: RuleGraphNodeType::Start,
+                    position: GraphPosition { x: 0.0, y: 0.0 },
+                    note: None,
+                    condition: None,
+                    route_provider: None,
+                    select_model: None,
+                    rewrite_path: None,
+                    set_context: None,
+                    router: None,
+                    log: None,
+                    set_header: None,
+                    remove_header: None,
+                    copy_header: None,
+                    set_header_if_absent: None,
+                    note_node: None,
+                    wasm_plugin: None,
+                }],
+                edges: Vec::new(),
+            }),
+            workflows_dir: None,
+            active_workflow_id: None,
+            workflows: Vec::new(),
+        };
+
+        let normalized = normalize_legacy_rule_graph(legacy);
+        assert_eq!(normalized.active_workflow_id.as_deref(), Some("default"));
+        assert_eq!(normalized.workflows.len(), 1);
+        assert!(normalized.rule_graph.is_none());
+    }
+
+    #[test]
     fn normalizes_legacy_route_provider_chain() {
         let legacy = r#"
 listen = "127.0.0.1:9001"
@@ -1372,10 +1480,12 @@ target = "end"
         let config = parse_config(&legacy).expect("legacy config should normalize");
         let graph = config.rule_graph.expect("graph should exist");
 
-        assert!(graph
-            .nodes
-            .iter()
-            .all(|node| node.node_type != RuleGraphNodeType::RouteProvider));
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|node| node.node_type != RuleGraphNodeType::RouteProvider)
+        );
         let select_model = graph
             .nodes
             .iter()
