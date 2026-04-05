@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,24 @@ pub struct WorkflowIndexEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowFileConfig {
     pub workflow: RuleGraphConfig,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LoadedWorkflowSet {
+    pub summaries: Vec<WorkflowIndexEntry>,
+    pub by_id: BTreeMap<String, WorkflowFileConfig>,
+    pub active_workflow_id: Option<String>,
+    legacy_rule_graph: Option<RuleGraphConfig>,
+}
+
+impl LoadedWorkflowSet {
+    pub fn active_graph(&self) -> Option<&RuleGraphConfig> {
+        self.active_workflow_id
+            .as_deref()
+            .and_then(|workflow_id| self.by_id.get(workflow_id))
+            .map(|workflow| &workflow.workflow)
+            .or(self.legacy_rule_graph.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,7 +357,83 @@ pub struct WasmPluginNodeConfig {
 
 pub fn load_config(path: &Path) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
-    parse_config(&raw)
+    let config = parse_config(&raw)?;
+    let _ = load_workflow_set(path, &config)?;
+    Ok(config)
+}
+
+pub fn resolve_workflows_dir(config_path: &Path, config: &GatewayConfig) -> Option<PathBuf> {
+    config.workflows_dir.as_ref().map(|relative| {
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(relative)
+    })
+}
+
+pub fn load_workflow_file(path: &Path) -> Result<WorkflowFileConfig, Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string(path)?;
+    Ok(toml::from_str(&raw)?)
+}
+
+pub fn load_workflow_set(
+    config_path: &Path,
+    config: &GatewayConfig,
+) -> Result<LoadedWorkflowSet, Box<dyn std::error::Error>> {
+    let provider_ids = unique_ids(
+        config.providers.iter().map(|provider| provider.id.as_str()),
+        "provider",
+    )?;
+    let model_ids = unique_ids(config.models.iter().map(|model| model.id.as_str()), "model")?;
+    let mut by_id = BTreeMap::new();
+    let workflows_dir = resolve_workflows_dir(config_path, config);
+    let can_fallback_to_legacy = config.rule_graph.is_some();
+
+    if !config.workflows.is_empty() {
+        match workflows_dir {
+            Some(ref workflows_dir) => {
+                for workflow in &config.workflows {
+                    let workflow_path = workflows_dir.join(&workflow.file);
+                    if can_fallback_to_legacy && !workflow_path.exists() {
+                        continue;
+                    }
+
+                    let loaded = load_workflow_file(&workflow_path).map_err(|error| {
+                        format!(
+                            "failed to load workflow '{}' from '{}': {error}",
+                            workflow.id,
+                            workflow_path.display()
+                        )
+                    })?;
+                    validate_rule_graph(
+                        &loaded.workflow,
+                        &provider_ids,
+                        &model_ids,
+                        &config.models,
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "workflow '{}' in '{}' is invalid: {error}",
+                            workflow.id,
+                            workflow_path.display()
+                        )
+                    })?;
+                    by_id.insert(workflow.id.clone(), loaded);
+                }
+            }
+            None if !can_fallback_to_legacy => {
+                return Err("workflows_dir must be set when workflows are present".into());
+            }
+            None => {}
+        }
+    }
+
+    Ok(LoadedWorkflowSet {
+        summaries: config.workflows.clone(),
+        by_id,
+        active_workflow_id: config.active_workflow_id.clone(),
+        legacy_rule_graph: config.rule_graph.clone(),
+    })
 }
 
 pub fn save_config_atomic(
@@ -1283,8 +1377,12 @@ fn default_enabled() -> bool {
 mod tests {
     use super::{
         GatewayConfig, GraphPosition, RuleGraphConfig, RuleGraphNode, RuleGraphNodeType, RuleScope,
-        normalize_legacy_rule_graph, parse_config,
+        load_config, load_workflow_file, normalize_legacy_rule_graph, parse_config,
+        resolve_workflows_dir,
     };
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     const VALID_CONFIG: &str = r#"
 listen = "127.0.0.1:9001"
@@ -1426,6 +1524,20 @@ source = "plugin"
 target = "end"
 "#;
 
+    fn temp_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be monotonic enough for tests")
+            .as_nanos();
+        dir.push(format!(
+            "proxy-tools-config-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir should be creatable");
+        dir
+    }
+
     #[test]
     fn parses_structured_gateway_config() {
         let config = parse_config(VALID_CONFIG).expect("valid config should parse");
@@ -1460,6 +1572,54 @@ description = "Main chat flow"
         assert_eq!(config.active_workflow_id.as_deref(), Some("chat-routing"));
         assert_eq!(config.workflows.len(), 1);
         assert_eq!(config.workflows[0].file, "chat-routing.toml");
+    }
+
+    #[test]
+    fn loads_workflow_file_from_workflows_dir() {
+        let root = temp_dir("load-workflow-file");
+        let config_path = root.join("gateway.toml");
+        let workflows_dir = root.join("workflows");
+
+        fs::create_dir_all(&workflows_dir).expect("workflows dir should be creatable");
+        fs::write(
+            &config_path,
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+workflows_dir = "workflows"
+active_workflow_id = "chat-routing"
+
+[[workflows]]
+id = "chat-routing"
+name = "Chat Routing"
+file = "chat-routing.toml"
+"#,
+        )
+        .expect("config should be writable");
+        fs::write(
+            workflows_dir.join("chat-routing.toml"),
+            r#"
+[workflow]
+version = 1
+start_node_id = "start"
+
+[[workflow.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+"#,
+        )
+        .expect("workflow should be writable");
+
+        let loaded = load_config(&config_path).expect("config should load");
+        let resolved_dir =
+            resolve_workflows_dir(&config_path, &loaded).expect("workflows dir should resolve");
+        let workflow = load_workflow_file(&resolved_dir.join("chat-routing.toml"))
+            .expect("workflow file should load");
+
+        assert_eq!(loaded.active_workflow_id.as_deref(), Some("chat-routing"));
+        assert_eq!(workflow.workflow.start_node_id, "start");
+        assert_eq!(workflow.workflow.nodes.len(), 1);
     }
 
     #[test]

@@ -1,20 +1,24 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
-use crate::config::{normalize_legacy_rule_graph, parse_config, save_config_atomic, GatewayConfig};
+use crate::config::{
+    GatewayConfig, LoadedWorkflowSet, load_workflow_set, normalize_legacy_rule_graph, parse_config,
+    save_config_atomic,
+};
 use crate::wasm_plugins::{ManifestCapability, PluginRegistry};
 
 #[derive(Clone)]
 pub struct AdminState {
     pub config: Arc<RwLock<GatewayConfig>>,
     pub config_path: PathBuf,
+    pub workflow_store: Arc<RwLock<LoadedWorkflowSet>>,
     pub plugin_registry: Arc<PluginRegistry>,
 }
 
@@ -63,8 +67,11 @@ pub async fn validate_config_handler(
 ) -> impl IntoResponse {
     match toml::to_string(&candidate)
         .map_err(|error| error.to_string())
-        .and_then(|raw| parse_config(&raw).map(|_| ()).map_err(|error| error.to_string()))
-    {
+        .and_then(|raw| {
+            parse_config(&raw)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        }) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
     }
@@ -75,9 +82,14 @@ pub async fn put_config(
     Json(candidate): Json<GatewayConfig>,
 ) -> impl IntoResponse {
     let normalized = normalize_legacy_rule_graph(candidate);
+    let workflow_store = match load_workflow_set(&state.config_path, &normalized) {
+        Ok(workflow_store) => workflow_store,
+        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    };
     match save_config_atomic(&state.config_path, &normalized).map_err(|error| error.to_string()) {
         Ok(()) => {
             *state.config.write().await = normalized;
+            *state.workflow_store.write().await = workflow_store;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
@@ -87,7 +99,14 @@ pub async fn put_config(
 pub async fn reload_config(State(state): State<AdminState>) -> impl IntoResponse {
     match crate::config::load_config(&state.config_path).map_err(|error| error.to_string()) {
         Ok(config) => {
+            let workflow_store = match load_workflow_set(&state.config_path, &config) {
+                Ok(workflow_store) => workflow_store,
+                Err(error) => {
+                    return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
+                }
+            };
             *state.config.write().await = config;
+            *state.workflow_store.write().await = workflow_store;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),

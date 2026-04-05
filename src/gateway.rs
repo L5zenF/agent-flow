@@ -27,8 +27,9 @@ use self::exports::proxy_tools::proxy_node_plugin::node_plugin::{
     PluginManifest, RequestHeader,
 };
 use crate::config::{
-    ConditionMode, GatewayConfig, HeaderValueConfig, ModelConfig, ProviderConfig, RouteConfig,
-    RouterClauseConfig, RuleGraphConfig, RuleGraphNodeType, WasmCapability, WasmPluginNodeConfig,
+    ConditionMode, GatewayConfig, HeaderValueConfig, LoadedWorkflowSet, ModelConfig,
+    ProviderConfig, RouteConfig, RouterClauseConfig, RuleGraphConfig, RuleGraphNodeType,
+    WasmCapability, WasmPluginNodeConfig,
 };
 use crate::crypto::decrypt_header_value;
 use crate::rules::{RequestContext, build_header_map, evaluate_expression, render_template};
@@ -162,6 +163,7 @@ wasmtime::component::bindgen!({
 pub struct GatewayState {
     pub client: Client,
     pub config: Arc<RwLock<GatewayConfig>>,
+    pub workflow_store: Arc<RwLock<LoadedWorkflowSet>>,
     pub plugin_registry: Arc<PluginRegistry>,
 }
 
@@ -430,8 +432,10 @@ pub async fn proxy_request(
     };
 
     let config = state.config.read().await;
+    let workflow_store = state.workflow_store.read().await;
     let resolution = match resolve_request(
         &config,
+        &workflow_store,
         state.plugin_registry.as_ref(),
         &WASMTIME_PLUGIN_RUNTIME,
         &method,
@@ -501,6 +505,7 @@ struct RequestResolution<'a> {
 
 fn resolve_request<'a>(
     config: &'a GatewayConfig,
+    workflow_store: &'a LoadedWorkflowSet,
     plugin_registry: &PluginRegistry,
     runtime: &dyn PluginNodeRuntime,
     method: &Method,
@@ -517,7 +522,7 @@ fn resolve_request<'a>(
         None,
         None,
     );
-    if let Some(graph) = &config.rule_graph {
+    if let Some(graph) = workflow_store.active_graph() {
         if !graph.nodes.is_empty() {
             return execute_rule_graph(
                 config,
@@ -1270,9 +1275,9 @@ fn resolve_plugin_network_policy(
             allow_ip_name_lookup = true;
         }
 
-        let resolved = host.to_socket_addrs().map_err(|error| {
-            format!("failed to resolve allowlisted host '{host}': {error}")
-        })?;
+        let resolved = host
+            .to_socket_addrs()
+            .map_err(|error| format!("failed to resolve allowlisted host '{host}': {error}"))?;
         let mut resolved_any = false;
         for addr in resolved {
             allowed_addrs.insert(addr);
@@ -2155,13 +2160,19 @@ target = "end"
 
         assert_eq!(preopens.len(), 2);
         assert_eq!(preopens[0].guest_path, "/plugins-data/common");
-        assert_eq!(preopens[0].host_path, workspace_root.join("plugins-data/common"));
+        assert_eq!(
+            preopens[0].host_path,
+            workspace_root.join("plugins-data/common")
+        );
         assert!(preopens[0].dir_perms.contains(DirPerms::READ));
         assert!(!preopens[0].dir_perms.contains(DirPerms::MUTATE));
         assert!(preopens[0].file_perms.contains(FilePerms::READ));
         assert!(!preopens[0].file_perms.contains(FilePerms::WRITE));
         assert_eq!(preopens[1].guest_path, "/plugins-data/runtime");
-        assert_eq!(preopens[1].host_path, workspace_root.join("plugins-data/runtime"));
+        assert_eq!(
+            preopens[1].host_path,
+            workspace_root.join("plugins-data/runtime")
+        );
         assert!(preopens[1].dir_perms.contains(DirPerms::READ));
         assert!(preopens[1].dir_perms.contains(DirPerms::MUTATE));
         assert!(preopens[1].file_perms.contains(FilePerms::READ));

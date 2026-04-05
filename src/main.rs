@@ -9,7 +9,7 @@ use clap::{Args, Parser, Subcommand};
 use proxy_tools::admin_api::{
     AdminState, get_config, get_plugins, put_config, reload_config, validate_config_handler,
 };
-use proxy_tools::config::load_config;
+use proxy_tools::config::{load_config, load_workflow_set};
 use proxy_tools::crypto::encrypt_header_value;
 use proxy_tools::frontend::{panel_asset, panel_index};
 use proxy_tools::gateway::{GatewayState, proxy_request};
@@ -68,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&cli.config)?;
+    let shared_workflow_store = Arc::new(RwLock::new(load_workflow_set(&cli.config, &config)?));
     let plugins_root = resolve_plugins_root(&cli.config)?;
     let plugin_registry = Arc::new(load_plugin_registry(&plugins_root)?);
     let gateway_addr: SocketAddr = config.listen.parse()?;
@@ -77,11 +78,13 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let gateway_state = GatewayState {
         client: Client::builder().build()?,
         config: shared_config.clone(),
+        workflow_store: shared_workflow_store.clone(),
         plugin_registry: plugin_registry.clone(),
     };
     let admin_state = AdminState {
         config: shared_config.clone(),
         config_path: cli.config.clone(),
+        workflow_store: shared_workflow_store.clone(),
         plugin_registry: plugin_registry.clone(),
     };
     let gateway_app = Router::new()
@@ -180,6 +183,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::resolve_plugins_root;
+    use proxy_tools::config::{GatewayConfig, load_workflow_set};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -235,5 +239,56 @@ mod tests {
                 .contains("could not resolve plugins directory"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn resolves_active_workflow_graph_from_indexed_files() {
+        let root = temp_dir("active-workflow");
+        let config_path = root.join("gateway.toml");
+        let workflows_dir = root.join("workflows");
+
+        fs::create_dir_all(&workflows_dir).expect("workflows dir should be creatable");
+        fs::write(
+            workflows_dir.join("chat-routing.toml"),
+            r#"
+[workflow]
+version = 1
+start_node_id = "start"
+
+[[workflow.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+"#,
+        )
+        .expect("workflow file should be writable");
+
+        let config = GatewayConfig {
+            listen: "127.0.0.1:9001".to_string(),
+            admin_listen: "127.0.0.1:9002".to_string(),
+            default_secret_env: None,
+            providers: Vec::new(),
+            models: Vec::new(),
+            routes: Vec::new(),
+            header_rules: Vec::new(),
+            rule_graph: None,
+            workflows_dir: Some("workflows".to_string()),
+            active_workflow_id: Some("chat-routing".to_string()),
+            workflows: vec![proxy_tools::config::WorkflowIndexEntry {
+                id: "chat-routing".to_string(),
+                name: "Chat Routing".to_string(),
+                file: "chat-routing.toml".to_string(),
+                description: None,
+            }],
+        };
+
+        let store = load_workflow_set(&config_path, &config).expect("workflow store should load");
+        let active = store
+            .active_graph()
+            .expect("active workflow should resolve");
+
+        assert_eq!(store.active_workflow_id.as_deref(), Some("chat-routing"));
+        assert_eq!(active.start_node_id, "start");
+        assert_eq!(store.by_id.len(), 1);
     }
 }
