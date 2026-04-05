@@ -1,5 +1,5 @@
+use std::fs;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -68,7 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&cli.config)?;
-    let plugin_registry = Arc::new(load_plugin_registry(Path::new("plugins"))?);
+    let plugins_root = resolve_plugins_root(&cli.config)?;
+    let plugin_registry = Arc::new(load_plugin_registry(&plugins_root)?);
     let gateway_addr: SocketAddr = config.listen.parse()?;
     let admin_addr: SocketAddr = config.admin_listen.parse()?;
     let shared_config = Arc::new(RwLock::new(config));
@@ -101,6 +102,11 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     info!(listen = %gateway_addr, "gateway listening");
     info!(admin_listen = %admin_addr, "admin listening");
+    info!(
+        plugins_root = %plugins_root.display(),
+        plugin_count = plugin_registry.len(),
+        "wasm plugin registry loaded"
+    );
 
     let gateway_server =
         axum::serve(gateway_listener, gateway_app).with_graceful_shutdown(shutdown_signal());
@@ -111,9 +117,119 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn resolve_plugins_root(
+    config_path: &std::path::Path,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let canonical_config_path = fs::canonicalize(config_path)?;
+    let config_dir = canonical_config_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "config path '{}' does not have a parent directory",
+                canonical_config_path.display()
+            ),
+        )
+    })?;
+
+    let mut candidates = vec![config_dir.join("plugins")];
+    if let Some(project_root) = config_dir.parent() {
+        let project_plugins = project_root.join("plugins");
+        if project_plugins != candidates[0] {
+            candidates.push(project_plugins);
+        }
+    }
+
+    let checked_locations = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+
+    for candidate in candidates {
+        if candidate.is_dir() {
+            return Ok(candidate);
+        }
+        if candidate.exists() {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "resolved plugins path '{}' exists but is not a directory",
+                    candidate.display()
+                ),
+            )));
+        }
+    }
+
+    Err(Box::new(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!(
+            "could not resolve plugins directory for config '{}'; checked: {}",
+            canonical_config_path.display(),
+            checked_locations.join(", ")
+        ),
+    )))
+}
+
 async fn shutdown_signal() {
     match tokio::signal::ctrl_c().await {
         Ok(()) => info!("shutdown signal received"),
         Err(error) => warn!("failed to listen for shutdown signal: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_plugins_root;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be monotonic enough for tests")
+            .as_nanos();
+        dir.push(format!(
+            "proxy-tools-main-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir should be creatable");
+        dir
+    }
+
+    #[test]
+    fn resolves_plugins_directory_from_project_root() {
+        let root = temp_dir("resolve-plugins");
+        let config_dir = root.join("config");
+        let plugins_dir = root.join("plugins");
+        let config_path = config_dir.join("gateway.toml");
+
+        fs::create_dir_all(&config_dir).expect("config dir should be creatable");
+        fs::create_dir_all(&plugins_dir).expect("plugins dir should be creatable");
+        fs::write(&config_path, "listen = \"127.0.0.1:3000\"\n")
+            .expect("config file should be writable");
+
+        let resolved = resolve_plugins_root(&config_path).expect("plugins root should resolve");
+        assert_eq!(resolved, plugins_dir);
+    }
+
+    #[test]
+    fn rejects_missing_plugins_directory() {
+        let root = temp_dir("missing-plugins");
+        let config_dir = root.join("config");
+        let config_path = config_dir.join("gateway.toml");
+
+        fs::create_dir_all(&config_dir).expect("config dir should be creatable");
+        fs::write(&config_path, "listen = \"127.0.0.1:3000\"\n")
+            .expect("config file should be writable");
+
+        let error = resolve_plugins_root(&config_path)
+            .expect_err("missing plugins root should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("could not resolve plugins directory"),
+            "unexpected error: {error}"
+        );
     }
 }

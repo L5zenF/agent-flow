@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use wasmtime::{Engine, component::Component};
+use wasmtime::{Config as WasmtimeConfig, Engine, component::Component};
 
 type PluginResult<T> = Result<T, Box<dyn Error>>;
 
@@ -45,25 +45,27 @@ struct RawPluginManifest {
 
 #[derive(Clone)]
 pub struct ComponentCache {
-    engine: Arc<Engine>,
     components: BTreeMap<PathBuf, Arc<Component>>,
 }
 
 impl ComponentCache {
     pub fn new() -> Self {
         Self {
-            engine: Arc::new(Engine::default()),
             components: BTreeMap::new(),
         }
     }
 
-    pub fn get_or_load(&mut self, path: &Path) -> PluginResult<Arc<Component>> {
+    pub fn len(&self) -> usize {
+        self.components.len()
+    }
+
+    pub fn get_or_load(&mut self, engine: &Engine, path: &Path) -> PluginResult<Arc<Component>> {
         let cache_key = path.to_path_buf();
         if let Some(component) = self.components.get(&cache_key) {
             return Ok(component.clone());
         }
 
-        let component = Arc::new(Component::from_file(self.engine.as_ref(), path)?);
+        let component = Arc::new(Component::from_file(engine, path)?);
         self.components.insert(cache_key, component.clone());
         Ok(component)
     }
@@ -107,6 +109,7 @@ impl LoadedPlugin {
 #[derive(Clone)]
 pub struct PluginRegistry {
     plugins_root: PathBuf,
+    engine: Arc<Engine>,
     component_cache: ComponentCache,
     plugins: BTreeMap<String, LoadedPlugin>,
 }
@@ -118,6 +121,14 @@ impl PluginRegistry {
 
     pub fn len(&self) -> usize {
         self.plugins.len()
+    }
+
+    pub fn engine(&self) -> &Engine {
+        self.engine.as_ref()
+    }
+
+    pub fn component_cache(&self) -> &ComponentCache {
+        &self.component_cache
     }
 
     pub fn is_empty(&self) -> bool {
@@ -134,9 +145,12 @@ impl PluginRegistry {
 }
 
 pub fn load_plugin_registry(path: &Path) -> PluginResult<PluginRegistry> {
+    let engine = Arc::new(build_component_engine()?);
+
     if !path.exists() {
         return Ok(PluginRegistry {
             plugins_root: path.to_path_buf(),
+            engine,
             component_cache: ComponentCache::new(),
             plugins: BTreeMap::new(),
         });
@@ -179,7 +193,7 @@ pub fn load_plugin_registry(path: &Path) -> PluginResult<PluginRegistry> {
         let manifest_raw = fs::read_to_string(&manifest_path)?;
         let manifest = parse_plugin_manifest(&manifest_path, &manifest_raw)?;
 
-        let component = component_cache.get_or_load(&wasm_path)?;
+        let component = component_cache.get_or_load(engine.as_ref(), &wasm_path)?;
         let plugin = LoadedPlugin {
             manifest: manifest.clone(),
             manifest_path,
@@ -198,6 +212,7 @@ pub fn load_plugin_registry(path: &Path) -> PluginResult<PluginRegistry> {
 
     Ok(PluginRegistry {
         plugins_root: path.to_path_buf(),
+        engine,
         component_cache,
         plugins,
     })
@@ -216,16 +231,25 @@ fn parse_plugin_manifest(path: &Path, raw: &str) -> PluginResult<PluginManifest>
         .into_iter()
         .map(|capability| parse_manifest_capability(path, &capability))
         .collect::<PluginResult<Vec<_>>>()?;
+    let supported_output_ports =
+        validate_supported_output_ports(path, raw_manifest.supported_output_ports)?;
 
     Ok(PluginManifest {
         id: raw_manifest.id,
         name: raw_manifest.name,
         version: raw_manifest.version,
         description: raw_manifest.description,
-        supported_output_ports: raw_manifest.supported_output_ports,
+        supported_output_ports,
         capabilities,
         default_config_schema_hints: raw_manifest.default_config_schema_hints,
     })
+}
+
+fn build_component_engine() -> PluginResult<Engine> {
+    let mut config = WasmtimeConfig::new();
+    config.wasm_component_model(true);
+    config.consume_fuel(true);
+    Engine::new(&config).map_err(Into::into)
 }
 
 fn parse_manifest_capability(path: &Path, capability: &str) -> PluginResult<ManifestCapability> {
@@ -239,6 +263,31 @@ fn parse_manifest_capability(path: &Path, capability: &str) -> PluginResult<Mani
             other
         ))),
     }
+}
+
+fn validate_supported_output_ports(path: &Path, ports: Vec<String>) -> PluginResult<Vec<String>> {
+    let mut seen = BTreeSet::new();
+    let mut validated = Vec::with_capacity(ports.len());
+
+    for port in ports {
+        let normalized = port.trim();
+        if normalized.is_empty() {
+            return Err(invalid_data(format!(
+                "plugin manifest '{}' contains an empty supported_output_ports entry",
+                path.display()
+            )));
+        }
+        if !seen.insert(normalized.to_owned()) {
+            return Err(invalid_data(format!(
+                "plugin manifest '{}' declares duplicate supported_output_port '{}'",
+                path.display(),
+                normalized
+            )));
+        }
+        validated.push(normalized.to_owned());
+    }
+
+    Ok(validated)
 }
 
 fn invalid_data(message: impl Into<String>) -> Box<dyn Error> {
@@ -302,6 +351,7 @@ default_config_schema_hints = { prompt = "string", default_intent = "string" }
         let registry = load_plugin_registry(&root).expect("registry should load");
         assert_eq!(registry.root(), root.as_path());
         assert_eq!(registry.len(), 1);
+        assert_eq!(registry.component_cache().len(), 1);
 
         let plugin = registry
             .get("intent-classifier")
@@ -360,6 +410,56 @@ default_config_schema_hints = { prompt = "string", default_intent = "string" }
         assert_eq!(
             hints.get("default_intent").and_then(|value| value.as_str()),
             Some("string")
+        );
+    }
+
+    #[test]
+    fn rejects_empty_supported_output_port_names() {
+        let error = match parse_plugin_manifest(
+            Path::new("plugins/intent-classifier/plugin.toml"),
+            r#"
+id = "intent-classifier"
+name = "Intent Classifier"
+version = "1.0.0"
+description = "Classifies request intent"
+supported_output_ports = ["chat", "   "]
+capabilities = ["fs"]
+"#,
+        ) {
+            Ok(_) => panic!("empty supported_output_ports should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("contains an empty supported_output_ports entry"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_supported_output_port_names() {
+        let error = match parse_plugin_manifest(
+            Path::new("plugins/intent-classifier/plugin.toml"),
+            r#"
+id = "intent-classifier"
+name = "Intent Classifier"
+version = "1.0.0"
+description = "Classifies request intent"
+supported_output_ports = ["chat", " chat "]
+capabilities = ["network"]
+"#,
+        ) {
+            Ok(_) => panic!("duplicate supported_output_ports should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("declares duplicate supported_output_port 'chat'"),
+            "unexpected error: {error}"
         );
     }
 
