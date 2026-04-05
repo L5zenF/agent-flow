@@ -61,6 +61,12 @@ impl LoadedWorkflowSet {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RuntimeState {
+    pub config: GatewayConfig,
+    pub workflow_set: LoadedWorkflowSet,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub id: String,
@@ -358,8 +364,12 @@ pub struct WasmPluginNodeConfig {
 pub fn load_config(path: &Path) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let config = parse_config(&raw)?;
-    let _ = load_workflow_set(path, &config)?;
     Ok(config)
+}
+
+pub fn load_runtime_state(path: &Path) -> Result<RuntimeState, Box<dyn std::error::Error>> {
+    let config = load_config(path)?;
+    runtime_state_from_config(path, config)
 }
 
 pub fn resolve_workflows_dir(config_path: &Path, config: &GatewayConfig) -> Option<PathBuf> {
@@ -387,24 +397,30 @@ pub fn load_workflow_set(
     let model_ids = unique_ids(config.models.iter().map(|model| model.id.as_str()), "model")?;
     let mut by_id = BTreeMap::new();
     let workflows_dir = resolve_workflows_dir(config_path, config);
-    let can_fallback_to_legacy = config.rule_graph.is_some();
+    let allow_legacy_missing_file_fallback = uses_synthesized_legacy_workflow_index(config);
 
     if !config.workflows.is_empty() {
         match workflows_dir {
             Some(ref workflows_dir) => {
                 for workflow in &config.workflows {
                     let workflow_path = workflows_dir.join(&workflow.file);
-                    if can_fallback_to_legacy && !workflow_path.exists() {
-                        continue;
-                    }
-
-                    let loaded = load_workflow_file(&workflow_path).map_err(|error| {
-                        format!(
-                            "failed to load workflow '{}' from '{}': {error}",
-                            workflow.id,
-                            workflow_path.display()
-                        )
-                    })?;
+                    let loaded = match load_workflow_file(&workflow_path) {
+                        Ok(loaded) => loaded,
+                        Err(error)
+                            if allow_legacy_missing_file_fallback
+                                && is_not_found_error(error.as_ref()) =>
+                        {
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(format!(
+                                "failed to load workflow '{}' from '{}': {error}",
+                                workflow.id,
+                                workflow_path.display()
+                            )
+                            .into());
+                        }
+                    };
                     validate_rule_graph(
                         &loaded.workflow,
                         &provider_ids,
@@ -421,10 +437,22 @@ pub fn load_workflow_set(
                     by_id.insert(workflow.id.clone(), loaded);
                 }
             }
-            None if !can_fallback_to_legacy => {
+            None => {
                 return Err("workflows_dir must be set when workflows are present".into());
             }
-            None => {}
+        }
+    }
+
+    if let Some(active_workflow_id) = config.active_workflow_id.as_deref() {
+        if !config.workflows.is_empty()
+            && !by_id.contains_key(active_workflow_id)
+            && !allow_legacy_missing_file_fallback
+        {
+            return Err(format!(
+                "active workflow '{}' could not be loaded from indexed workflow files",
+                active_workflow_id
+            )
+            .into());
         }
     }
 
@@ -433,6 +461,17 @@ pub fn load_workflow_set(
         by_id,
         active_workflow_id: config.active_workflow_id.clone(),
         legacy_rule_graph: config.rule_graph.clone(),
+    })
+}
+
+pub fn runtime_state_from_config(
+    config_path: &Path,
+    config: GatewayConfig,
+) -> Result<RuntimeState, Box<dyn std::error::Error>> {
+    let workflow_set = load_workflow_set(config_path, &config)?;
+    Ok(RuntimeState {
+        config,
+        workflow_set,
     })
 }
 
@@ -708,6 +747,37 @@ fn normalize_workflow_index_inputs(mut config: GatewayConfig) -> GatewayConfig {
     }
 
     config
+}
+
+fn uses_synthesized_legacy_workflow_index(config: &GatewayConfig) -> bool {
+    if config.rule_graph.is_none() || config.workflows.len() != 1 {
+        return false;
+    }
+
+    let Some(workflows_dir) = config.workflows_dir.as_deref() else {
+        return false;
+    };
+    let Some(active_workflow_id) = config.active_workflow_id.as_deref() else {
+        return false;
+    };
+    let workflow = &config.workflows[0];
+    let expected_name = if active_workflow_id == "default" {
+        "Default Workflow".to_string()
+    } else {
+        format!("Workflow {active_workflow_id}")
+    };
+
+    workflows_dir == "workflows"
+        && workflow.id == active_workflow_id
+        && workflow.name == expected_name
+        && workflow.file == format!("{active_workflow_id}.toml")
+        && workflow.description.as_deref() == Some("Migrated from legacy rule_graph")
+}
+
+fn is_not_found_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
 }
 
 fn validate_workflow_index(config: &GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -1377,8 +1447,8 @@ fn default_enabled() -> bool {
 mod tests {
     use super::{
         GatewayConfig, GraphPosition, RuleGraphConfig, RuleGraphNode, RuleGraphNodeType, RuleScope,
-        load_config, load_workflow_file, normalize_legacy_rule_graph, parse_config,
-        resolve_workflows_dir,
+        load_config, load_workflow_file, load_workflow_set, normalize_legacy_rule_graph,
+        parse_config, resolve_workflows_dir,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1620,6 +1690,77 @@ position = { x = 0.0, y = 0.0 }
         assert_eq!(loaded.active_workflow_id.as_deref(), Some("chat-routing"));
         assert_eq!(workflow.workflow.start_node_id, "start");
         assert_eq!(workflow.workflow.nodes.len(), 1);
+    }
+
+    #[test]
+    fn rejects_missing_indexed_workflow_file_even_with_legacy_rule_graph() {
+        let root = temp_dir("missing-indexed-workflow");
+        let config_path = root.join("gateway.toml");
+
+        let config = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+workflows_dir = "workflows"
+active_workflow_id = "chat-routing"
+
+[[workflows]]
+id = "chat-routing"
+name = "Chat Routing"
+file = "chat-routing.toml"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+"#,
+        )
+        .expect("config should parse");
+
+        let error = load_workflow_set(&config_path, &config)
+            .expect_err("missing indexed workflow should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to load workflow 'chat-routing'"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn allows_missing_synthesized_legacy_workflow_file() {
+        let root = temp_dir("legacy-missing-workflow");
+        let config_path = root.join("gateway.toml");
+
+        let config = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+"#,
+        )
+        .expect("legacy config should parse");
+
+        let workflow_set =
+            load_workflow_set(&config_path, &config).expect("legacy fallback should load");
+        let active = workflow_set
+            .active_graph()
+            .expect("legacy rule graph should still be active");
+
+        assert_eq!(workflow_set.by_id.len(), 0);
+        assert_eq!(active.start_node_id, "start");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use clap::{Args, Parser, Subcommand};
 use proxy_tools::admin_api::{
     AdminState, get_config, get_plugins, put_config, reload_config, validate_config_handler,
 };
-use proxy_tools::config::{load_config, load_workflow_set};
+use proxy_tools::config::load_runtime_state;
 use proxy_tools::crypto::encrypt_header_value;
 use proxy_tools::frontend::{panel_asset, panel_index};
 use proxy_tools::gateway::{GatewayState, proxy_request};
@@ -67,24 +67,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config(&cli.config)?;
-    let shared_workflow_store = Arc::new(RwLock::new(load_workflow_set(&cli.config, &config)?));
+    let runtime_state = load_runtime_state(&cli.config)?;
     let plugins_root = resolve_plugins_root(&cli.config)?;
     let plugin_registry = Arc::new(load_plugin_registry(&plugins_root)?);
-    let gateway_addr: SocketAddr = config.listen.parse()?;
-    let admin_addr: SocketAddr = config.admin_listen.parse()?;
-    let shared_config = Arc::new(RwLock::new(config));
+    let gateway_addr: SocketAddr = runtime_state.config.listen.parse()?;
+    let admin_addr: SocketAddr = runtime_state.config.admin_listen.parse()?;
+    let shared_runtime_state = Arc::new(RwLock::new(runtime_state));
 
     let gateway_state = GatewayState {
         client: Client::builder().build()?,
-        config: shared_config.clone(),
-        workflow_store: shared_workflow_store.clone(),
+        runtime_state: shared_runtime_state.clone(),
         plugin_registry: plugin_registry.clone(),
     };
     let admin_state = AdminState {
-        config: shared_config.clone(),
+        runtime_state: shared_runtime_state.clone(),
         config_path: cli.config.clone(),
-        workflow_store: shared_workflow_store.clone(),
         plugin_registry: plugin_registry.clone(),
     };
     let gateway_app = Router::new()

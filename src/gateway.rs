@@ -29,7 +29,7 @@ use self::exports::proxy_tools::proxy_node_plugin::node_plugin::{
 use crate::config::{
     ConditionMode, GatewayConfig, HeaderValueConfig, LoadedWorkflowSet, ModelConfig,
     ProviderConfig, RouteConfig, RouterClauseConfig, RuleGraphConfig, RuleGraphNodeType,
-    WasmCapability, WasmPluginNodeConfig,
+    RuntimeState, WasmCapability, WasmPluginNodeConfig,
 };
 use crate::crypto::decrypt_header_value;
 use crate::rules::{RequestContext, build_header_map, evaluate_expression, render_template};
@@ -162,8 +162,7 @@ wasmtime::component::bindgen!({
 #[derive(Clone)]
 pub struct GatewayState {
     pub client: Client,
-    pub config: Arc<RwLock<GatewayConfig>>,
-    pub workflow_store: Arc<RwLock<LoadedWorkflowSet>>,
+    pub runtime_state: Arc<RwLock<RuntimeState>>,
     pub plugin_registry: Arc<PluginRegistry>,
 }
 
@@ -431,11 +430,10 @@ pub async fn proxy_request(
         }
     };
 
-    let config = state.config.read().await;
-    let workflow_store = state.workflow_store.read().await;
+    let runtime_state = state.runtime_state.read().await;
     let resolution = match resolve_request(
-        &config,
-        &workflow_store,
+        &runtime_state.config,
+        &runtime_state.workflow_set,
         state.plugin_registry.as_ref(),
         &WASMTIME_PLUGIN_RUNTIME,
         &method,
