@@ -1,0 +1,13 @@
+id = "match-evaluator"
+name = "Match Evaluator"
+version = "0.1.0"
+description = "Evaluates branch expressions for the Match node."
+supported_output_ports = ["match"]
+capabilities = ["log"]
+
+[ui]
+icon = "filter"
+category = "policy"
+tone = "blue"
+order = 40
+tags = ["match", "routing"]

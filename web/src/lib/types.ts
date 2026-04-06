@@ -54,6 +54,34 @@ export type GraphPosition = {
 };
 
 export type WasmCapability = "log" | "fs" | "network";
+export type WasmPluginIcon =
+  | "puzzle"
+  | "split"
+  | "route"
+  | "wand"
+  | "shield"
+  | "code"
+  | "filter"
+  | "database"
+  | "file_text";
+export type WasmPluginCategory = "control" | "transform" | "routing" | "policy" | "utility";
+export type WasmPluginTone = "slate" | "blue" | "sky" | "teal" | "emerald" | "amber" | "rose" | "violet";
+export type WasmPluginConfigFieldType = "text" | "textarea" | "select" | "boolean";
+export type WasmPluginConfigFieldDataSource = "providers" | "models";
+export type WasmPluginConfigField = {
+  key: string;
+  label: string;
+  type: WasmPluginConfigFieldType;
+  required: boolean;
+  placeholder?: string | null;
+  help_text?: string | null;
+  data_source?: WasmPluginConfigFieldDataSource | null;
+  depends_on?: string | null;
+};
+export type WasmPluginConfigSchema = {
+  version: number;
+  fields: WasmPluginConfigField[];
+};
 
 export type CodeRunnerLanguage = "javascript";
 
@@ -65,6 +93,14 @@ export type WasmPluginManifestSummary = {
   supported_output_ports: string[];
   capabilities: WasmCapability[];
   default_config_schema_hints?: unknown | null;
+  config_schema?: WasmPluginConfigSchema | null;
+  ui: {
+    icon?: WasmPluginIcon | null;
+    category?: WasmPluginCategory | null;
+    tone?: WasmPluginTone | null;
+    order?: number | null;
+    tags: string[];
+  };
 };
 
 export type RuleGraphNodeType =
@@ -81,7 +117,7 @@ export type RuleGraphNodeType =
   | "copy_header"
   | "set_header_if_absent"
   | "wasm_plugin"
-  | "wasm_match"
+  | "match"
   | "code_runner"
   | "note"
   | "end";
@@ -156,7 +192,7 @@ export type RuleGraphNode = {
     allowed_hosts: string[];
     config: Record<string, unknown>;
   } | null;
-  wasm_match?: {
+  match?: {
     plugin_id: string;
     timeout_ms: number;
     fuel?: number | null;

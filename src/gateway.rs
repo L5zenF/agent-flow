@@ -779,9 +779,9 @@ fn execute_rule_graph<'a>(
                         .or(next_linear_edge(graph, current_id)?),
                 }
             }
-            RuleGraphNodeType::WasmMatch => {
-                let node_config = node.wasm_match.as_ref().ok_or_else(|| {
-                    format!("rule_graph node '{}' missing wasm_match config", node.id)
+            RuleGraphNodeType::Match => {
+                let node_config = node.match_node.as_ref().ok_or_else(|| {
+                    format!("rule_graph node '{}' missing match config", node.id)
                 })?;
                 let mut matched_target = None;
                 for branch in &node_config.branches {
@@ -2694,15 +2694,15 @@ position = { x = 0.0, y = 0.0 }
 
 [[rule_graph.nodes]]
 id = "matcher"
-type = "wasm_match"
+type = "match"
 position = { x = 120.0, y = 0.0 }
 
-[rule_graph.nodes.wasm_match]
+[rule_graph.nodes.match]
 plugin_id = "intent-classifier"
 max_memory_bytes = 16777216
 fallback_node_id = "fallback-provider"
 
-[[rule_graph.nodes.wasm_match.branches]]
+[[rule_graph.nodes.match.branches]]
 id = "chat"
 expr = "method == POST"
 target_node_id = "chat-provider"
@@ -2772,22 +2772,6 @@ target = "end"
 
     #[test]
     #[ignore = "manual regression for real plugin ABI issues"]
-    fn executes_real_intent_classifier_plugin() {
-        execute_real_plugin_regression("intent-classifier", "/chat", vec![WasmCapability::Log]);
-    }
-
-    #[test]
-    #[ignore = "manual regression for real plugin ABI issues"]
-    fn executes_real_remote_policy_router_plugin() {
-        execute_real_plugin_regression(
-            "remote-policy-router",
-            "/v1/chat/completions",
-            vec![WasmCapability::Log],
-        );
-    }
-
-    #[test]
-    #[ignore = "manual regression for real plugin ABI issues"]
     fn executes_real_minimal_smoke_plugin() {
         execute_real_plugin_regression("minimal-smoke", "/smoke", Vec::new());
     }
@@ -2797,9 +2781,16 @@ target = "end"
         _current_path: &str,
         granted_capabilities: Vec<WasmCapability>,
     ) {
-        let registry_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
-        let registry = load_plugin_registry(&registry_root).expect("plugin registry should load");
-        let plugin = registry.get(plugin_id).expect("plugin should exist");
+        let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plugins_root = project_root.join("plugins");
+        let registry = load_plugin_registry(&plugins_root).expect("plugin registry should load");
+        let fixture_root = project_root.join("tests/fixtures");
+        let fixture_registry =
+            load_plugin_registry(&fixture_root).expect("fixture plugin registry should load");
+        let plugin = registry
+            .get(plugin_id)
+            .or_else(|| fixture_registry.get(plugin_id))
+            .expect("plugin should exist");
         let node_config = WasmPluginNodeConfig {
             plugin_id: plugin_id.to_string(),
             timeout_ms: 5_000,

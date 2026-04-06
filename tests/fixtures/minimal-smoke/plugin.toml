@@ -4,3 +4,10 @@ version = "0.1.0"
 description = "Minimal wasm smoke plugin for runtime regression checks."
 supported_output_ports = ["default"]
 capabilities = []
+
+[ui]
+icon = "code"
+category = "utility"
+tone = "slate"
+order = 200
+tags = ["smoke", "test"]

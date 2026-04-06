@@ -44,7 +44,7 @@ Example node config:
 
 ```toml
 [rule_graph.nodes.wasm_plugin]
-plugin_id = "intent-classifier"
+plugin_id = "match-evaluator"
 timeout_ms = 20
 fuel = 500000
 max_memory_bytes = 16777216
@@ -70,7 +70,6 @@ The admin UI reads plugin metadata from `/admin/plugins` and uses these manifest
 
 Included sample plugins:
 
-- `intent-classifier` for simple header and path-based branching.
-- `remote-policy-router` for local policy files plus optional remote JSON overrides.
+- `match-evaluator` for branch-by-branch request matching.
 
-For file-based plugins, prefer guest paths that match the granted directory mount, for example `/plugins/remote-policy-router/examples/local-policy.json`.
+For file-based plugins, prefer guest paths that match the granted directory mount.

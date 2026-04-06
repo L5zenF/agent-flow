@@ -1,6 +1,0 @@
-id = "wasm-match-demo"
-name = "Wasm Match Demo"
-version = "0.1.0"
-description = "Evaluates simple branch expressions for wasm_match example workflows."
-supported_output_ports = ["match"]
-capabilities = ["log"]

@@ -199,8 +199,8 @@ pub struct RuleGraphNode {
     pub note_node: Option<NoteNodeConfig>,
     #[serde(default)]
     pub wasm_plugin: Option<WasmPluginNodeConfig>,
-    #[serde(default)]
-    pub wasm_match: Option<WasmMatchNodeConfig>,
+    #[serde(default, rename = "match", alias = "wasm_match")]
+    pub match_node: Option<MatchNodeConfig>,
     #[serde(default)]
     pub code_runner: Option<CodeRunnerNodeConfig>,
 }
@@ -236,7 +236,8 @@ pub enum RuleGraphNodeType {
     CopyHeader,
     SetHeaderIfAbsent,
     WasmPlugin,
-    WasmMatch,
+    #[serde(alias = "match")]
+    Match,
     CodeRunner,
     Note,
     End,
@@ -368,17 +369,17 @@ pub struct WasmPluginNodeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WasmMatchNodeConfig {
+pub struct MatchNodeConfig {
     #[serde(flatten)]
     pub plugin: WasmPluginNodeConfig,
     #[serde(default)]
-    pub branches: Vec<WasmMatchBranchConfig>,
+    pub branches: Vec<MatchBranchConfig>,
     #[serde(default)]
     pub fallback_node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WasmMatchBranchConfig {
+pub struct MatchBranchConfig {
     pub id: String,
     pub expr: String,
     pub target_node_id: String,
@@ -1117,9 +1118,7 @@ fn validate_rule_graph_node(
         RuleGraphNodeType::WasmPlugin => {
             validate_wasm_plugin_node(node.id.as_str(), node.wasm_plugin.as_ref())?
         }
-        RuleGraphNodeType::WasmMatch => {
-            validate_wasm_match_node(node.id.as_str(), graph, node.wasm_match.as_ref())?
-        }
+        RuleGraphNodeType::Match => validate_match_node(node.id.as_str(), graph, node.match_node.as_ref())?,
         RuleGraphNodeType::CodeRunner => {
             validate_code_runner_node(node.id.as_str(), node.code_runner.as_ref())?
         }
@@ -1361,20 +1360,17 @@ fn validate_wasm_plugin_node(
     Ok(())
 }
 
-fn validate_wasm_match_node(
+fn validate_match_node(
     node_id: &str,
     graph: &RuleGraphConfig,
-    config: Option<&WasmMatchNodeConfig>,
+    config: Option<&MatchNodeConfig>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing wasm_match config").into());
+        return Err(format!("rule_graph node '{node_id}' missing match config").into());
     };
     validate_wasm_plugin_node(node_id, Some(&config.plugin))?;
     if config.branches.is_empty() {
-        return Err(format!(
-            "rule_graph node '{node_id}' must define at least one wasm_match branch"
-        )
-        .into());
+        return Err(format!("rule_graph node '{node_id}' must define at least one match branch").into());
     }
 
     let node_ids = graph
@@ -1385,21 +1381,18 @@ fn validate_wasm_match_node(
     let mut branch_ids = HashSet::new();
     for branch in &config.branches {
         if branch.id.trim().is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' contains a wasm_match branch with empty id"
-            )
-            .into());
+            return Err(format!("rule_graph node '{node_id}' contains a match branch with empty id").into());
         }
         if !branch_ids.insert(branch.id.as_str()) {
             return Err(format!(
-                "rule_graph node '{node_id}' has duplicate wasm_match branch id '{}'",
+                "rule_graph node '{node_id}' has duplicate match branch id '{}'",
                 branch.id
             )
             .into());
         }
         if branch.expr.trim().is_empty() {
             return Err(format!(
-                "rule_graph node '{node_id}' wasm_match branch '{}' has empty expr",
+                "rule_graph node '{node_id}' match branch '{}' has empty expr",
                 branch.id
             )
             .into());
@@ -1408,7 +1401,7 @@ fn validate_wasm_match_node(
             || !node_ids.contains(branch.target_node_id.as_str())
         {
             return Err(format!(
-                "rule_graph node '{node_id}' wasm_match branch '{}' references missing target '{}'",
+                "rule_graph node '{node_id}' match branch '{}' references missing target '{}'",
                 branch.id, branch.target_node_id
             )
             .into());
@@ -1774,22 +1767,22 @@ position = { x = 0.0, y = 0.0 }
 
 [[rule_graph.nodes]]
 id = "matcher"
-type = "wasm_match"
+type = "match"
 position = { x = 120.0, y = 0.0 }
 
-[rule_graph.nodes.wasm_match]
+[rule_graph.nodes.match]
 plugin_id = "remote-policy-router"
 fuel = 500000
 max_memory_bytes = 16777216
 granted_capabilities = ["log"]
 fallback_node_id = "end"
 
-[[rule_graph.nodes.wasm_match.branches]]
+[[rule_graph.nodes.match.branches]]
 id = "chat"
 expr = "ctx.header.x-tenant == enterprise"
 target_node_id = "end"
 
-[rule_graph.nodes.wasm_match.config]
+[rule_graph.nodes.match.config]
 match_header = "x-tenant"
 fallback_port = "default"
 
@@ -2142,7 +2135,7 @@ position = { x = 0.0, y = 0.0 }
                     set_header_if_absent: None,
                     note_node: None,
                     wasm_plugin: None,
-                    wasm_match: None,
+                    match_node: None,
                     code_runner: None,
                 }],
                 edges: Vec::new(),
@@ -2194,7 +2187,7 @@ position = { x = 0.0, y = 0.0 }
                     set_header_if_absent: None,
                     note_node: None,
                     wasm_plugin: None,
-                    wasm_match: None,
+                    match_node: None,
                     code_runner: None,
                 }],
                 edges: Vec::new(),
@@ -2607,7 +2600,7 @@ target = "end"
     }
 
     #[test]
-    fn parses_wasm_match_node() {
+    fn parses_match_node() {
         let config = parse_config(VALID_WASM_MATCH_CONFIG).expect("wasm match config should parse");
         let graph = config.rule_graph.expect("graph should exist");
         let node = graph
@@ -2616,9 +2609,9 @@ target = "end"
             .find(|node| node.id == "matcher")
             .expect("matcher node should exist");
 
-        assert_eq!(node.node_type, RuleGraphNodeType::WasmMatch);
+        assert_eq!(node.node_type, RuleGraphNodeType::Match);
         let plugin = node
-            .wasm_match
+            .match_node
             .as_ref()
             .expect("wasm match config should exist");
         assert_eq!(plugin.plugin.plugin_id, "remote-policy-router");

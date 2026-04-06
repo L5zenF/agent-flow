@@ -14,7 +14,10 @@ use crate::config::{
     resolve_workflow_path, runtime_state_from_config, save_config_atomic,
     save_workflow_file_atomic,
 };
-use crate::wasm_plugins::{ManifestCapability, PluginRegistry};
+use crate::wasm_plugins::{
+    ManifestCapability, ManifestCategory, ManifestIcon, ManifestTone, PluginConfigSchema,
+    PluginRegistry,
+};
 
 #[derive(Clone)]
 pub struct AdminState {
@@ -32,6 +35,17 @@ pub struct PluginManifestSummary {
     pub supported_output_ports: Vec<String>,
     pub capabilities: Vec<String>,
     pub default_config_schema_hints: Option<toml::Value>,
+    pub config_schema: Option<PluginConfigSchema>,
+    pub ui: PluginManifestUiSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginManifestUiSummary {
+    pub icon: Option<String>,
+    pub category: Option<String>,
+    pub tone: Option<String>,
+    pub order: Option<i32>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,6 +89,32 @@ pub async fn get_plugins(State(state): State<AdminState>) -> impl IntoResponse {
                 .map(str::to_string)
                 .collect(),
             default_config_schema_hints: plugin.manifest().default_config_schema_hints.clone(),
+            config_schema: plugin.manifest().config_schema.clone(),
+            ui: PluginManifestUiSummary {
+                icon: plugin
+                    .manifest()
+                    .ui
+                    .icon
+                    .as_ref()
+                    .map(manifest_icon_name)
+                    .map(str::to_string),
+                category: plugin
+                    .manifest()
+                    .ui
+                    .category
+                    .as_ref()
+                    .map(manifest_category_name)
+                    .map(str::to_string),
+                tone: plugin
+                    .manifest()
+                    .ui
+                    .tone
+                    .as_ref()
+                    .map(manifest_tone_name)
+                    .map(str::to_string),
+                order: plugin.manifest().ui.order,
+                tags: plugin.manifest().ui.tags.clone(),
+            },
         })
         .collect::<Vec<_>>();
 
@@ -303,6 +343,43 @@ fn manifest_capability_name(capability: &ManifestCapability) -> &'static str {
     }
 }
 
+fn manifest_icon_name(icon: &ManifestIcon) -> &'static str {
+    match icon {
+        ManifestIcon::Puzzle => "puzzle",
+        ManifestIcon::Split => "split",
+        ManifestIcon::Route => "route",
+        ManifestIcon::Wand => "wand",
+        ManifestIcon::Shield => "shield",
+        ManifestIcon::Code => "code",
+        ManifestIcon::Filter => "filter",
+        ManifestIcon::Database => "database",
+        ManifestIcon::FileText => "file_text",
+    }
+}
+
+fn manifest_category_name(category: &ManifestCategory) -> &'static str {
+    match category {
+        ManifestCategory::Control => "control",
+        ManifestCategory::Transform => "transform",
+        ManifestCategory::Routing => "routing",
+        ManifestCategory::Policy => "policy",
+        ManifestCategory::Utility => "utility",
+    }
+}
+
+fn manifest_tone_name(tone: &ManifestTone) -> &'static str {
+    match tone {
+        ManifestTone::Slate => "slate",
+        ManifestTone::Blue => "blue",
+        ManifestTone::Sky => "sky",
+        ManifestTone::Teal => "teal",
+        ManifestTone::Emerald => "emerald",
+        ManifestTone::Amber => "amber",
+        ManifestTone::Rose => "rose",
+        ManifestTone::Violet => "violet",
+    }
+}
+
 fn workflow_document(workflows: &LoadedWorkflowSet, id: &str) -> Option<WorkflowFileConfig> {
     workflows.by_id.get(id).cloned().or_else(|| {
         (workflows.active_workflow_id.as_deref() == Some(id))
@@ -388,7 +465,7 @@ fn default_workflow_document() -> WorkflowFileConfig {
                 set_header_if_absent: None,
                 note_node: None,
                 wasm_plugin: None,
-                wasm_match: None,
+                match_node: None,
                 code_runner: None,
             }],
             edges: Vec::new(),
@@ -732,7 +809,7 @@ description = "Fallback workflow"
                             set_header_if_absent: None,
                             note_node: None,
                             wasm_plugin: None,
-                            wasm_match: None,
+                            match_node: None,
                             code_runner: None,
                         },
                         crate::config::RuleGraphNode {
@@ -753,7 +830,7 @@ description = "Fallback workflow"
                             set_header_if_absent: None,
                             note_node: None,
                             wasm_plugin: None,
-                            wasm_match: None,
+                            match_node: None,
                             code_runner: None,
                         },
                     ],

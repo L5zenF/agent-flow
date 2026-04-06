@@ -1,9 +1,0 @@
-id = "intent-classifier"
-name = "意图分类器"
-version = "0.1.0"
-description = "根据请求路径和请求头识别基础意图，并为后续分流提供输出端口。"
-supported_output_ports = ["chat", "default"]
-capabilities = ["log"]
-
-[default_config_schema_hints]
-prompt = "可选的自由文本提示词，用于未来扩展自定义分类规则。"

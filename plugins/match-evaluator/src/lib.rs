@@ -27,7 +27,7 @@ impl Guest for Component {
         let mut logs = vec![LogEntry {
             level: LogLevel::Info,
             message: format!(
-                "wasm-match-demo evaluated branch '{}' with expr '{}' => {}",
+                "match-evaluator evaluated branch '{}' with expr '{}' => {}",
                 branch_id, expr, matched
             ),
         }];
@@ -46,11 +46,11 @@ impl Guest for Component {
             context_patch: Some(ContextPatch {
                 ops: vec![
                     ContextPatchOp::Set(ContextEntry {
-                        key: "wasm_match.last_branch".to_string(),
+                        key: "match.last_branch".to_string(),
                         value: branch_id,
                     }),
                     ContextPatchOp::Set(ContextEntry {
-                        key: "wasm_match.last_result".to_string(),
+                        key: "match.last_result".to_string(),
                         value: if matched { "match" } else { "miss" }.to_string(),
                     }),
                 ],

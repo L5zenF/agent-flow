@@ -7,145 +7,143 @@ id = "start"
 type = "start"
 
 [workflow.nodes.position]
-x = 69.41704752740952
-y = 116.84062377466648
+x = 80.0
+y = 180.0
 
 [[workflow.nodes]]
-id = "note-8"
-type = "note"
+id = "match-1"
+type = "match"
 
 [workflow.nodes.position]
-x = 394.6578566256336
-y = -392.2541636495293
+x = 280.0
+y = 180.0
 
-[workflow.nodes.note_node]
-text = "你好"
+[workflow.nodes.match]
+plugin_id = "match-evaluator"
+timeout_ms = 250
+max_memory_bytes = 16777216
+granted_capabilities = ["log"]
+fallback_node_id = "fallback-provider"
+
+[[workflow.nodes.match.branches]]
+id = "chat-api"
+expr = 'method == "POST" && path == "/v1/chat/completions"'
+target_node_id = "select-chat-model"
+
+[[workflow.nodes.match.branches]]
+id = "legacy-chat"
+expr = 'method == "POST" && path == "/chat"'
+target_node_id = "rewrite-legacy-chat"
 
 [[workflow.nodes]]
-id = "log-9"
-type = "log"
+id = "rewrite-legacy-chat"
+type = "rewrite_path"
 
 [workflow.nodes.position]
-x = 437.9100934097669
-y = -91.45242103892916
+x = 560.0
+y = 320.0
 
-[workflow.nodes.log]
-message = """
-route=${ctx.path}
-kimi"""
-
-[[workflow.nodes]]
-id = "router-4"
-type = "router"
-
-[workflow.nodes.position]
-x = 241.79208652385245
-y = 236.1072699684284
-
-[workflow.nodes.router]
-fallback_node_id = "log-6"
-
-[[workflow.nodes.router.rules]]
-id = "rule-1"
-target_node_id = "log-9"
-
-[[workflow.nodes.router.rules.clauses]]
-source = "ctx.path"
-operator = "=="
+[workflow.nodes.rewrite_path]
 value = "/v1/chat/completions"
 
-[[workflow.nodes.router.rules]]
-id = "rule-2"
-target_node_id = "log-5"
-
-[[workflow.nodes.router.rules.clauses]]
-source = "ctx.path"
-operator = "=="
-value = "/v2"
-
 [[workflow.nodes]]
-id = "log-5"
-type = "log"
-
-[workflow.nodes.position]
-x = 836.2772919406019
-y = 473.8869108193056
-
-[workflow.nodes.log]
-message = """
-rout=${ctx.path}
-v2"""
-
-[[workflow.nodes]]
-id = "log-6"
-type = "log"
-
-[workflow.nodes.position]
-x = 956.7798301524388
-y = 793.6456145782744
-
-[workflow.nodes.log]
-message = "啥都没"
-
-[[workflow.nodes]]
-id = "end-7"
-type = "end"
-
-[workflow.nodes.position]
-x = 1409.727843408957
-y = 516.1318991288113
-
-[[workflow.nodes]]
-id = "select_model-8"
+id = "select-chat-model"
 type = "select_model"
 
 [workflow.nodes.position]
-x = 778.1776771868708
-y = -46.66375075153991
+x = 560.0
+y = 120.0
 
 [workflow.nodes.select_model]
 provider_id = "kimi"
 model_id = "kimi-k2"
 
+[[workflow.nodes]]
+id = "fallback-provider"
+type = "route_provider"
+
+[workflow.nodes.position]
+x = 560.0
+y = 520.0
+
+[workflow.nodes.route_provider]
+provider_id = "kimi"
+
+[[workflow.nodes]]
+id = "tag-route"
+type = "set_header"
+
+[workflow.nodes.position]
+x = 860.0
+y = 180.0
+
+[workflow.nodes.set_header]
+name = "x-route-engine"
+value = "match"
+
+[[workflow.nodes]]
+id = "log-summary"
+type = "log"
+
+[workflow.nodes.position]
+x = 1120.0
+y = 180.0
+
+[workflow.nodes.log]
+message = "matched=${ctx.match.last_branch} result=${ctx.match.last_result} path=${ctx.path}"
+
+[[workflow.nodes]]
+id = "end"
+type = "end"
+
+[workflow.nodes.position]
+x = 1360.0
+y = 180.0
+
 [[workflow.edges]]
 id = "start-next"
 source = "start"
-target = "router-4"
+target = "match-1"
 
 [[workflow.edges]]
-id = "router-4-router:rule-1"
-source = "router-4"
-target = "log-9"
-source_handle = "router:rule-1"
+id = "match-1-chat-api"
+source = "match-1"
+target = "select-chat-model"
+source_handle = "match:chat-api"
 
 [[workflow.edges]]
-id = "router-4-router:rule-2"
-source = "router-4"
-target = "log-5"
-source_handle = "router:rule-2"
+id = "match-1-legacy-chat"
+source = "match-1"
+target = "rewrite-legacy-chat"
+source_handle = "match:legacy-chat"
 
 [[workflow.edges]]
-id = "router-4-router:fallback"
-source = "router-4"
-target = "log-6"
-source_handle = "router:fallback"
+id = "match-1-fallback"
+source = "match-1"
+target = "fallback-provider"
+source_handle = "match:fallback"
 
 [[workflow.edges]]
-id = "log-5-next"
-source = "log-5"
-target = "end-7"
+id = "rewrite-legacy-chat-next"
+source = "rewrite-legacy-chat"
+target = "select-chat-model"
 
 [[workflow.edges]]
-id = "log-6-next"
-source = "log-6"
-target = "end-7"
+id = "select-chat-model-next"
+source = "select-chat-model"
+target = "tag-route"
 
 [[workflow.edges]]
-id = "log-9-next"
-source = "log-9"
-target = "select_model-8"
+id = "fallback-provider-next"
+source = "fallback-provider"
+target = "tag-route"
 
 [[workflow.edges]]
-id = "select_model-8-next"
-source = "select_model-8"
-target = "end-7"
+id = "tag-route-next"
+source = "tag-route"
+target = "log-summary"
+
+[[workflow.edges]]
+id = "log-summary-next"
+source = "log-summary"
+target = "end"

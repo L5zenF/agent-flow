@@ -2,7 +2,7 @@ listen = "127.0.0.1:9001"
 admin_listen = "127.0.0.1:9002"
 default_secret_env = "PROXY_SECRET"
 workflows_dir = "workflows"
-active_workflow_id = "code-runner-example"
+active_workflow_id = "default"
 
 [[providers]]
 id = "kimi"
@@ -49,27 +49,3 @@ id = "default"
 name = "Default Workflow"
 file = "default.toml"
 description = "Migrated from legacy rule_graph"
-
-[[workflows]]
-id = "test-wasm"
-name = "test-wasm"
-file = "test-wasm.toml"
-description = "test-wasm"
-
-[[workflows]]
-id = "test"
-name = "test"
-file = "test.toml"
-description = "test"
-
-[[workflows]]
-id = "wasm-match-example"
-name = "Wasm Match Example"
-file = "wasm-match-example.toml"
-description = "Example workflow showing branch-based wasm_match routing"
-
-[[workflows]]
-id = "code-runner-example"
-name = "Code Runner Example"
-file = "code-runner-example.toml"
-description = "Example workflow showing JavaScript request cleanup with code_runner"

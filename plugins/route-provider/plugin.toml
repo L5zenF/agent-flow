@@ -1,0 +1,33 @@
+id = "route-provider"
+name = "Route Provider"
+version = "0.1.0"
+description = "Selects a provider for downstream proxying."
+supported_output_ports = ["default"]
+capabilities = ["log"]
+
+[ui]
+icon = "route"
+category = "routing"
+tone = "sky"
+order = 56
+tags = ["routing", "provider"]
+
+[default_config_schema_hints]
+provider_id = "Provider id to select."
+log_message = "Optional template log line."
+
+[config_schema]
+version = 1
+
+[[config_schema.fields]]
+key = "provider_id"
+label = "Provider"
+type = "select"
+required = true
+data_source = "providers"
+
+[[config_schema.fields]]
+key = "log_message"
+label = "Log Message"
+type = "textarea"
+placeholder = "selected provider=${ctx.selection.provider_id}"
