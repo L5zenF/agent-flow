@@ -388,6 +388,7 @@ fn default_workflow_document() -> WorkflowFileConfig {
                 set_header_if_absent: None,
                 note_node: None,
                 wasm_plugin: None,
+                wasm_match: None,
             }],
             edges: Vec::new(),
         },
@@ -730,6 +731,7 @@ description = "Fallback workflow"
                             set_header_if_absent: None,
                             note_node: None,
                             wasm_plugin: None,
+                            wasm_match: None,
                         },
                         crate::config::RuleGraphNode {
                             id: "end".to_string(),
@@ -749,6 +751,7 @@ description = "Fallback workflow"
                             set_header_if_absent: None,
                             note_node: None,
                             wasm_plugin: None,
+                            wasm_match: None,
                         },
                     ],
                     edges: vec![crate::config::RuleGraphEdge {

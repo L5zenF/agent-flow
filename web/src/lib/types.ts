@@ -78,6 +78,7 @@ export type RuleGraphNodeType =
   | "copy_header"
   | "set_header_if_absent"
   | "wasm_plugin"
+  | "wasm_match"
   | "note"
   | "end";
 
@@ -141,6 +142,17 @@ export type RuleGraphNode = {
     value: string;
   } | null;
   wasm_plugin?: {
+    plugin_id: string;
+    timeout_ms: number;
+    fuel?: number | null;
+    max_memory_bytes: number;
+    granted_capabilities: WasmCapability[];
+    read_dirs: string[];
+    write_dirs: string[];
+    allowed_hosts: string[];
+    config: Record<string, unknown>;
+  } | null;
+  wasm_match?: {
     plugin_id: string;
     timeout_ms: number;
     fuel?: number | null;

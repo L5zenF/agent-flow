@@ -199,6 +199,8 @@ pub struct RuleGraphNode {
     pub note_node: Option<NoteNodeConfig>,
     #[serde(default)]
     pub wasm_plugin: Option<WasmPluginNodeConfig>,
+    #[serde(default)]
+    pub wasm_match: Option<WasmPluginNodeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +234,7 @@ pub enum RuleGraphNodeType {
     CopyHeader,
     SetHeaderIfAbsent,
     WasmPlugin,
+    WasmMatch,
     Note,
     End,
 }
@@ -1079,6 +1082,9 @@ fn validate_rule_graph_node(
         RuleGraphNodeType::WasmPlugin => {
             validate_wasm_plugin_node(node.id.as_str(), node.wasm_plugin.as_ref())?
         }
+        RuleGraphNodeType::WasmMatch => {
+            validate_wasm_plugin_node(node.id.as_str(), node.wasm_match.as_ref())?
+        }
     }
 
     Ok(())
@@ -1472,7 +1478,7 @@ fn default_enabled() -> bool {
 mod tests {
     use super::{
         GatewayConfig, GraphPosition, RuleGraphConfig, RuleGraphNode, RuleGraphNodeType, RuleScope,
-        load_config, load_workflow_file, load_workflow_set, normalize_legacy_rule_graph,
+        WasmCapability, load_config, load_workflow_file, load_workflow_set, normalize_legacy_rule_graph,
         parse_config, resolve_workflows_dir,
     };
     use std::fs;
@@ -1616,6 +1622,56 @@ target = "plugin"
 [[rule_graph.edges]]
 id = "edge-2"
 source = "plugin"
+target = "end"
+"#;
+
+    const VALID_WASM_MATCH_CONFIG: &str = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "matcher"
+type = "wasm_match"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.wasm_match]
+plugin_id = "remote-policy-router"
+fuel = 500000
+max_memory_bytes = 16777216
+granted_capabilities = ["log"]
+
+[rule_graph.nodes.wasm_match.config]
+match_header = "x-tenant"
+fallback_port = "default"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 240.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "edge-1"
+source = "start"
+target = "matcher"
+
+[[rule_graph.edges]]
+id = "edge-2"
+source = "matcher"
+source_handle = "default"
 target = "end"
 "#;
 
@@ -1906,6 +1962,7 @@ position = { x = 0.0, y = 0.0 }
                     set_header_if_absent: None,
                     note_node: None,
                     wasm_plugin: None,
+                    wasm_match: None,
                 }],
                 edges: Vec::new(),
             }),
@@ -1956,6 +2013,7 @@ position = { x = 0.0, y = 0.0 }
                     set_header_if_absent: None,
                     note_node: None,
                     wasm_plugin: None,
+                    wasm_match: None,
                 }],
                 edges: Vec::new(),
             }),
@@ -2363,6 +2421,33 @@ target = "end"
         assert!(
             error.to_string().contains("missing field `plugin_id`"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn parses_wasm_match_node() {
+        let config =
+            parse_config(VALID_WASM_MATCH_CONFIG).expect("wasm match config should parse");
+        let graph = config.rule_graph.expect("graph should exist");
+        let node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "matcher")
+            .expect("matcher node should exist");
+
+        assert_eq!(node.node_type, RuleGraphNodeType::WasmMatch);
+        let plugin = node
+            .wasm_match
+            .as_ref()
+            .expect("wasm match config should exist");
+        assert_eq!(plugin.plugin_id, "remote-policy-router");
+        assert_eq!(plugin.timeout_ms, 20);
+        assert_eq!(plugin.fuel, Some(500000));
+        assert_eq!(plugin.max_memory_bytes, 16_777_216);
+        assert_eq!(plugin.granted_capabilities, vec![WasmCapability::Log]);
+        assert_eq!(
+            plugin.config.get("match_header").and_then(|value| value.as_str()),
+            Some("x-tenant")
         );
     }
 

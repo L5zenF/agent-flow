@@ -722,73 +722,46 @@ fn execute_rule_graph<'a>(
                 next_linear_edge(graph, current_id)?
             }
             RuleGraphNodeType::WasmPlugin => {
-                let node_config = node.wasm_plugin.as_ref().ok_or_else(|| {
-                    format!("rule_graph node '{}' missing wasm_plugin config", node.id)
-                })?;
-                let plugin = plugin_registry
-                    .get(node_config.plugin_id.as_str())
-                    .ok_or_else(|| {
-                        format!(
-                            "rule_graph node '{}' references unknown plugin '{}'",
-                            node.id, node_config.plugin_id
-                        )
-                    })?;
-                let runtime_input = build_runtime_execute_input(
-                    plugin,
+                execute_wasm_runtime_node(
+                    graph,
+                    current_id,
                     node.id.as_str(),
-                    node_config,
+                    node.wasm_plugin
+                        .as_ref()
+                        .ok_or_else(|| {
+                            format!("rule_graph node '{}' missing wasm_plugin config", node.id)
+                        })?,
+                    plugin_registry,
+                    runtime,
                     method.as_str(),
-                    &resolved_path,
-                    &current_request_headers(headers, &outgoing_headers),
-                    &workflow_context,
+                    headers,
                     selected_provider,
                     selected_model,
-                )?;
-                let runtime_output = runtime.execute(
-                    plugin,
-                    node_config.timeout_ms,
-                    node_config.fuel,
-                    node_config.max_memory_bytes,
-                    node_config,
-                    &runtime_input,
-                )?;
-
-                apply_runtime_output(
-                    &node.id,
-                    plugin,
-                    &runtime_output,
+                    &mut resolved_path,
                     &mut workflow_context,
                     &mut outgoing_headers,
+                )?
+            }
+            RuleGraphNodeType::WasmMatch => {
+                execute_wasm_runtime_node(
+                    graph,
+                    current_id,
+                    node.id.as_str(),
+                    node.wasm_match
+                        .as_ref()
+                        .ok_or_else(|| {
+                            format!("rule_graph node '{}' missing wasm_match config", node.id)
+                        })?,
+                    plugin_registry,
+                    runtime,
+                    method.as_str(),
+                    headers,
+                    selected_provider,
+                    selected_model,
                     &mut resolved_path,
-                );
-
-                match runtime_output.next_port.as_deref() {
-                    Some(port) => {
-                        if !plugin
-                            .manifest()
-                            .supported_output_ports
-                            .iter()
-                            .any(|item| item == port)
-                        {
-                            return Err(format!(
-                                "plugin '{}' returned unknown port '{}' for node '{}'",
-                                plugin.plugin_id(),
-                                port,
-                                node.id
-                            ));
-                        }
-                        Some(next_condition_edge(graph, current_id, port)?.ok_or_else(|| {
-                            format!(
-                                "plugin '{}' returned port '{}' for node '{}' but no outgoing edge matched it",
-                                plugin.plugin_id(),
-                                port,
-                                node.id
-                            )
-                        })?)
-                    }
-                    None => next_condition_edge(graph, current_id, "default")?
-                        .or(next_linear_edge(graph, current_id)?),
-                }
+                    &mut workflow_context,
+                    &mut outgoing_headers,
+                )?
             }
             RuleGraphNodeType::Router => {
                 let node_config = node.router.as_ref().ok_or_else(|| {
@@ -1069,6 +1042,88 @@ fn build_runtime_execute_input(
                 .then(|| toml_value_to_json(&toml::Value::Table(node_config.config.clone()))),
         },
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_wasm_runtime_node<'a>(
+    graph: &'a RuleGraphConfig,
+    current_id: &str,
+    node_id: &str,
+    node_config: &WasmPluginNodeConfig,
+    plugin_registry: &PluginRegistry,
+    runtime: &dyn PluginNodeRuntime,
+    method: &str,
+    headers: &HeaderMap,
+    selected_provider: Option<&ProviderConfig>,
+    selected_model: Option<&ModelConfig>,
+    resolved_path: &mut String,
+    workflow_context: &mut HashMap<String, String>,
+    outgoing_headers: &mut HashMap<String, Vec<String>>,
+) -> Result<Option<&'a str>, String> {
+    let plugin = plugin_registry
+        .get(node_config.plugin_id.as_str())
+        .ok_or_else(|| {
+            format!(
+                "rule_graph node '{}' references unknown plugin '{}'",
+                node_id, node_config.plugin_id
+            )
+        })?;
+    let runtime_input = build_runtime_execute_input(
+        plugin,
+        node_id,
+        node_config,
+        method,
+        resolved_path.as_str(),
+        &current_request_headers(headers, outgoing_headers),
+        workflow_context,
+        selected_provider,
+        selected_model,
+    )?;
+    let runtime_output = runtime.execute(
+        plugin,
+        node_config.timeout_ms,
+        node_config.fuel,
+        node_config.max_memory_bytes,
+        node_config,
+        &runtime_input,
+    )?;
+
+    apply_runtime_output(
+        node_id,
+        plugin,
+        &runtime_output,
+        workflow_context,
+        outgoing_headers,
+        resolved_path,
+    );
+
+    match runtime_output.next_port.as_deref() {
+        Some(port) => {
+            if !plugin
+                .manifest()
+                .supported_output_ports
+                .iter()
+                .any(|item| item == port)
+            {
+                return Err(format!(
+                    "plugin '{}' returned unknown port '{}' for node '{}'",
+                    plugin.plugin_id(),
+                    port,
+                    node_id
+                ));
+            }
+            Ok(Some(next_condition_edge(graph, current_id, port)?.ok_or_else(|| {
+                format!(
+                    "plugin '{}' returned port '{}' for node '{}' but no outgoing edge matched it",
+                    plugin.plugin_id(),
+                    port,
+                    node_id
+                )
+            })?))
+        }
+        None => Ok(next_condition_edge(graph, current_id, "default")?
+            .or(next_linear_edge(graph, current_id)?)),
+    }
 }
 
 fn apply_runtime_output(
@@ -2178,6 +2233,99 @@ target = "end"
             .expect("graph execution should succeed");
 
         assert_eq!(resolution.path, "/coding/v1/chat/completions");
+        assert_eq!(runtime.calls(), 1);
+    }
+
+    #[test]
+    fn executes_wasm_match_node_and_routes_by_port() {
+        let config = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "matcher"
+type = "wasm_match"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.wasm_match]
+plugin_id = "intent-classifier"
+max_memory_bytes = 16777216
+
+[[rule_graph.nodes]]
+id = "chat-provider"
+type = "route_provider"
+position = { x = 240.0, y = 0.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+
+[[rule_graph.nodes]]
+id = "fallback-provider"
+type = "route_provider"
+position = { x = 240.0, y = 120.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 360.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "edge-start-matcher"
+source = "start"
+target = "matcher"
+
+[[rule_graph.edges]]
+id = "edge-matcher-chat"
+source = "matcher"
+source_handle = "chat"
+target = "chat-provider"
+
+[[rule_graph.edges]]
+id = "edge-matcher-default"
+source = "matcher"
+source_handle = "default"
+target = "fallback-provider"
+
+[[rule_graph.edges]]
+id = "edge-chat-end"
+source = "chat-provider"
+target = "end"
+
+[[rule_graph.edges]]
+id = "edge-fallback-end"
+source = "fallback-provider"
+target = "end"
+"#,
+        )
+        .expect("config should parse");
+        let registry = load_test_registry(&["chat", "default"], &[]);
+        let runtime = FakePluginRuntime::succeeds(RuntimeExecuteOutput {
+            next_port: Some("chat".to_string()),
+            ..RuntimeExecuteOutput::default()
+        });
+
+        let resolution = execute_test_graph(&config, &registry, &runtime, "/v1/chat/completions")
+            .expect("graph execution should succeed");
+
+        assert_eq!(resolution.provider.id, "kimi");
         assert_eq!(runtime.calls(), 1);
     }
 
