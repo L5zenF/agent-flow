@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 
-use crate::config::{GatewayConfig, HeaderActionConfig, HeaderRuleConfig, HeaderValueConfig, ProviderConfig, RouteConfig, RuleScope};
+use crate::config::{
+    GatewayConfig, HeaderActionConfig, HeaderRuleConfig, HeaderValueConfig, ProviderConfig,
+    RouteConfig, RuleScope,
+};
 use crate::crypto::decrypt_header_value;
 
 #[derive(Clone)]
@@ -93,7 +96,12 @@ fn ordered_rules<'a>(
         }
     }
 
-    global.into_iter().chain(provider).chain(model).chain(route).collect()
+    global
+        .into_iter()
+        .chain(provider)
+        .chain(model)
+        .chain(route)
+        .collect()
 }
 
 fn resolve_provider_header(
@@ -111,7 +119,12 @@ fn resolve_provider_header(
             secret_env
                 .as_deref()
                 .or(default_secret_env)
-                .ok_or_else(|| format!("header '{}' is encrypted but missing secret_env", header.name))?,
+                .ok_or_else(|| {
+                    format!(
+                        "header '{}' is encrypted but missing secret_env",
+                        header.name
+                    )
+                })?,
         ),
         HeaderValueConfig::Encrypted { value, .. } => Ok(value.clone()),
     }
@@ -187,10 +200,13 @@ fn evaluate_atom(expression: &str, request: &RequestContext<'_>) -> Result<bool,
     }
     if let Some(value) = expression.strip_suffix(')') {
         if let Some((left, raw)) = value.split_once(".startsWith(") {
-            return Ok(resolve_value(left.trim(), request)?.starts_with(&parse_string_literal(raw.trim())?));
+            return Ok(resolve_value(left.trim(), request)?
+                .starts_with(&parse_string_literal(raw.trim())?));
         }
         if let Some((left, raw)) = value.split_once(".contains(") {
-            return Ok(resolve_value(left.trim(), request)?.contains(&parse_string_literal(raw.trim())?));
+            return Ok(
+                resolve_value(left.trim(), request)?.contains(&parse_string_literal(raw.trim())?)
+            );
         }
     }
 
@@ -288,7 +304,11 @@ fn split_top_level<'a>(expression: &'a str, token: &str) -> Vec<&'a str> {
 pub fn render_template(template: &str, request: &RequestContext<'_>) -> Result<String, String> {
     let mut output = template.to_string();
 
-    replace_optional_token(&mut output, "${provider.id}", request.provider.map(|provider| provider.id.as_str()))?;
+    replace_optional_token(
+        &mut output,
+        "${provider.id}",
+        request.provider.map(|provider| provider.id.as_str()),
+    )?;
     replace_optional_token(
         &mut output,
         "${provider.name}",
@@ -363,8 +383,8 @@ pub fn render_template(template: &str, request: &RequestContext<'_>) -> Result<S
             .strip_prefix("${env.")
             .and_then(|value| value.strip_suffix('}'))
             .ok_or_else(|| format!("invalid template variable '{full}'"))?;
-        let value = std::env::var(key)
-            .map_err(|_| format!("environment variable '{key}' is not set"))?;
+        let value =
+            std::env::var(key).map_err(|_| format!("environment variable '{key}' is not set"))?;
         output = output.replacen(full, &value, 1);
     }
 
@@ -389,9 +409,11 @@ mod tests {
 
     use axum::http::{HeaderMap, HeaderValue};
 
-    use crate::config::{HeaderActionConfig, HeaderRuleConfig, ModelConfig, ProviderConfig, RouteConfig, RuleScope};
+    use crate::config::{
+        HeaderActionConfig, HeaderRuleConfig, ModelConfig, ProviderConfig, RouteConfig, RuleScope,
+    };
 
-    use super::{evaluate_expression, render_template, RequestContext};
+    use super::{RequestContext, evaluate_expression, render_template};
 
     #[test]
     fn evaluates_basic_expressions() {
@@ -429,18 +451,24 @@ mod tests {
             route: Some(&route),
         };
 
-        assert!(evaluate_expression("method == \"POST\" && path.startsWith(\"/v1/\")", &request)
-            .expect("expression should evaluate"));
-        assert!(evaluate_expression("header[\"x-target\"] == \"kimi\"", &request)
-            .expect("header equality should evaluate"));
+        assert!(
+            evaluate_expression("method == \"POST\" && path.startsWith(\"/v1/\")", &request)
+                .expect("expression should evaluate")
+        );
+        assert!(
+            evaluate_expression("header[\"x-target\"] == \"kimi\"", &request)
+                .expect("header equality should evaluate")
+        );
         let mut context = HashMap::new();
         context.insert("intent".to_string(), "code".to_string());
         let request_with_context = RequestContext {
             context: &context,
             ..request
         };
-        assert!(evaluate_expression("ctx.intent == \"code\"", &request_with_context)
-            .expect("context equality should evaluate"));
+        assert!(
+            evaluate_expression("ctx.intent == \"code\"", &request_with_context)
+                .expect("context equality should evaluate")
+        );
     }
 
     #[test]
@@ -478,8 +506,8 @@ mod tests {
             route: Some(&route),
         };
 
-        let rendered =
-            render_template("${provider.id}:${model.id}:${route.id}", &request).expect("template should render");
+        let rendered = render_template("${provider.id}:${model.id}:${route.id}", &request)
+            .expect("template should render");
         assert_eq!(rendered, "kimi:kimi-k2:chat-default");
         let mut context = HashMap::new();
         context.insert("route_hint".to_string(), "kimi".to_string());

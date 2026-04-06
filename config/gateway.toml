@@ -1,6 +1,8 @@
 listen = "127.0.0.1:9001"
 admin_listen = "127.0.0.1:9002"
 default_secret_env = "PROXY_SECRET"
+workflows_dir = "workflows"
+active_workflow_id = "default"
 
 [[providers]]
 id = "kimi"
@@ -42,154 +44,14 @@ type = "set"
 name = "X-Model"
 value = "${model.id}"
 
-[rule_graph]
-version = 1
-start_node_id = "start"
+[[workflows]]
+id = "default"
+name = "Default Workflow"
+file = "default.toml"
+description = "Migrated from legacy rule_graph"
 
-[[rule_graph.nodes]]
-id = "start"
-type = "start"
-
-[rule_graph.nodes.position]
-x = 69.41704752740952
-y = 116.84062377466648
-
-[[rule_graph.nodes]]
-id = "note-8"
-type = "note"
-
-[rule_graph.nodes.position]
-x = 394.6578566256336
-y = -392.2541636495293
-
-[rule_graph.nodes.note_node]
-text = "你好"
-
-[[rule_graph.nodes]]
-id = "log-9"
-type = "log"
-
-[rule_graph.nodes.position]
-x = 437.9100934097669
-y = -91.45242103892916
-
-[rule_graph.nodes.log]
-message = """
-route=${ctx.path}
-kimi"""
-
-[[rule_graph.nodes]]
-id = "router-4"
-type = "router"
-
-[rule_graph.nodes.position]
-x = 241.79208652385245
-y = 236.1072699684284
-
-[rule_graph.nodes.router]
-fallback_node_id = "log-6"
-
-[[rule_graph.nodes.router.rules]]
-id = "rule-1"
-target_node_id = "log-9"
-
-[[rule_graph.nodes.router.rules.clauses]]
-source = "ctx.path"
-operator = "=="
-value = "/v1/chat/completions"
-
-[[rule_graph.nodes.router.rules]]
-id = "rule-2"
-target_node_id = "log-5"
-
-[[rule_graph.nodes.router.rules.clauses]]
-source = "ctx.path"
-operator = "=="
-value = "/v2"
-
-[[rule_graph.nodes]]
-id = "log-5"
-type = "log"
-
-[rule_graph.nodes.position]
-x = 836.2772919406019
-y = 473.8869108193056
-
-[rule_graph.nodes.log]
-message = """
-rout=${ctx.path}
-v2"""
-
-[[rule_graph.nodes]]
-id = "log-6"
-type = "log"
-
-[rule_graph.nodes.position]
-x = 956.7798301524388
-y = 793.6456145782744
-
-[rule_graph.nodes.log]
-message = "啥都没"
-
-[[rule_graph.nodes]]
-id = "end-7"
-type = "end"
-
-[rule_graph.nodes.position]
-x = 1409.727843408957
-y = 516.1318991288113
-
-[[rule_graph.nodes]]
-id = "select_model-8"
-type = "select_model"
-
-[rule_graph.nodes.position]
-x = 778.1776771868708
-y = -46.66375075153991
-
-[rule_graph.nodes.select_model]
-provider_id = "kimi"
-model_id = "kimi-k2"
-
-[[rule_graph.edges]]
-id = "start-next"
-source = "start"
-target = "router-4"
-
-[[rule_graph.edges]]
-id = "router-4-router:rule-1"
-source = "router-4"
-target = "log-9"
-source_handle = "router:rule-1"
-
-[[rule_graph.edges]]
-id = "router-4-router:rule-2"
-source = "router-4"
-target = "log-5"
-source_handle = "router:rule-2"
-
-[[rule_graph.edges]]
-id = "router-4-router:fallback"
-source = "router-4"
-target = "log-6"
-source_handle = "router:fallback"
-
-[[rule_graph.edges]]
-id = "log-5-next"
-source = "log-5"
-target = "end-7"
-
-[[rule_graph.edges]]
-id = "log-6-next"
-source = "log-6"
-target = "end-7"
-
-[[rule_graph.edges]]
-id = "log-9-next"
-source = "log-9"
-target = "select_model-8"
-
-[[rule_graph.edges]]
-id = "select_model-8-next"
-source = "select_model-8"
-target = "end-7"
+[[workflows]]
+id = "test-wasm"
+name = "test-wasm"
+file = "test-wasm.toml"
+description = "test-wasm"

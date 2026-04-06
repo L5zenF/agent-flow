@@ -1,16 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use axum::extract::Path as AxumPath;
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 pub async fn panel_index() -> Response {
     serve_path(&dist_dir(), Path::new("index.html"), true)
 }
 
-pub async fn panel_asset(
-    AxumPath(path): AxumPath<String>,
-) -> Response {
+pub async fn panel_asset(AxumPath(path): AxumPath<String>) -> Response {
     let requested = PathBuf::from(path);
     let fallback_to_index = requested.extension().is_none();
     serve_path(&dist_dir(), &requested, fallback_to_index)
@@ -57,7 +55,11 @@ fn file_response(path: &Path) -> axum::response::Response {
 }
 
 fn content_type(path: &Path) -> header::HeaderValue {
-    let value = match path.extension().and_then(|item| item.to_str()).unwrap_or_default() {
+    let value = match path
+        .extension()
+        .and_then(|item| item.to_str())
+        .unwrap_or_default()
+    {
         "html" => "text/html; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         "js" => "application/javascript; charset=utf-8",

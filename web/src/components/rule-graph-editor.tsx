@@ -102,7 +102,14 @@ type NodeTone = {
   edge: string;
 };
 
-const NODE_LIBRARY: Array<{ type: RuleGraphNodeType; label: string }> = [
+type NodeLibraryItem = {
+  type: RuleGraphNodeType;
+  label: string;
+  shortLabel?: string;
+  pluginId?: string;
+};
+
+const BASE_NODE_LIBRARY: NodeLibraryItem[] = [
   { type: "condition", label: "Condition" },
   { type: "select_model", label: "Select Model" },
   { type: "set_context", label: "Set Context" },
@@ -113,7 +120,6 @@ const NODE_LIBRARY: Array<{ type: RuleGraphNodeType; label: string }> = [
   { type: "remove_header", label: "Remove Header" },
   { type: "copy_header", label: "Copy Header" },
   { type: "set_header_if_absent", label: "Set If Absent" },
-  { type: "wasm_plugin", label: "Wasm Plugin" },
   { type: "note", label: "Note" },
   { type: "end", label: "End" },
 ];
@@ -157,16 +163,28 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
       })),
     [config.models],
   );
+  const pluginManifestMap = useMemo(
+    () => new Map(pluginManifests.map((plugin) => [plugin.id, plugin])),
+    [pluginManifests],
+  );
   const pluginManifestOptions = useMemo(
     () =>
       pluginManifests.map((plugin) => ({
         value: plugin.id,
-        label: `${plugin.id} · ${plugin.version}`,
+        label: `${plugin.name || plugin.id} · ${plugin.version}`,
       })),
     [pluginManifests],
   );
-  const pluginManifestMap = useMemo(
-    () => new Map(pluginManifests.map((plugin) => [plugin.id, plugin])),
+  const nodeLibrary = useMemo<NodeLibraryItem[]>(
+    () => [
+      ...BASE_NODE_LIBRARY,
+      ...pluginManifests.map((plugin) => ({
+        type: "wasm_plugin" as const,
+        label: plugin.name || plugin.id,
+        shortLabel: shortLabelForPlugin(plugin.name || plugin.id),
+        pluginId: plugin.id,
+      })),
+    ],
     [pluginManifests],
   );
   const templateSuggestions = useMemo(() => {
@@ -284,11 +302,11 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
     [graph.edges, graph.nodes, selectedEdgeId],
   );
 
-  const addNode = (type: RuleGraphNodeType, position?: { x: number; y: number }) => {
-    const next = createNode(type, graph.nodes.length, graph.nodes);
+  const addNode = (item: NodeLibraryItem, position?: { x: number; y: number }) => {
+    const next = createNode(item.type, graph.nodes.length, graph.nodes, item.pluginId);
     const node = {
       ...next,
-      position: position ?? seedNodePosition(type, graph.nodes),
+      position: position ?? seedNodePosition(item.type, graph.nodes),
     };
 
     updateGraph(setConfig, {
@@ -459,9 +477,11 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           }}
           onDrop={(event) => {
             event.preventDefault();
-            const type = event.dataTransfer.getData("application/rule-node-type") as RuleGraphNodeType;
-            if (!type || !flowInstance) return;
-            addNode(type, flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+            const serializedItem = event.dataTransfer.getData("application/rule-node-template");
+            if (!serializedItem || !flowInstance) return;
+            const item = parseNodeLibraryItem(serializedItem);
+            if (!item) return;
+            addNode(item, flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
           }}
           onNodeClick={(_, node) => setSelectedNodeId(node.id)}
           onEdgeClick={(_, edge) => {
@@ -514,15 +534,18 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
                 Nodes
               </div>
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 xl:grid-cols-1">
-                {NODE_LIBRARY.map((item) => (
+                {nodeLibrary.map((item) => (
                   <button
-                    key={item.type}
+                    key={`${item.type}:${item.pluginId ?? item.label}`}
                     type="button"
                     draggable
                     title={item.label}
-                    onClick={() => addNode(item.type)}
+                    onClick={() => addNode(item)}
                     onDragStart={(event) => {
-                      event.dataTransfer.setData("application/rule-node-type", item.type);
+                      event.dataTransfer.setData(
+                        "application/rule-node-template",
+                        JSON.stringify(item),
+                      );
                       event.dataTransfer.effectAllowed = "move";
                     }}
                     className={[
@@ -533,7 +556,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
                     <div className="flex flex-col items-center gap-1">
                       {iconForLibraryNode(item.type)}
                       <span className="font-mono text-[8px] uppercase tracking-[0.12em] text-zinc-500">
-                        {shortLabelForType(item.type)}
+                        {item.shortLabel ?? shortLabelForType(item.type)}
                       </span>
                     </div>
                     <span className="pointer-events-none absolute left-[calc(100%+10px)] top-1/2 z-20 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 opacity-0 shadow-[0_10px_30px_rgba(15,23,42,0.12)] transition group-hover:opacity-100 xl:block">
@@ -745,7 +768,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                 tone.chipText,
               ].join(" ")}
             >
-              {labelForType(data.nodeType)}
+              {labelForNode(draft, data.pluginManifest)}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1149,39 +1172,44 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
           {draft.type === "wasm_plugin" ? (
             <div className="space-y-2">
-              <InlineSelect
-                value={draft.wasm_plugin?.plugin_id ?? ""}
-                options={data.pluginManifestOptions}
-                onChange={(value) => {
-                  commitNode({
-                    ...draft,
-                    wasm_plugin: {
-                      plugin_id: value,
-                      timeout_ms: draft.wasm_plugin?.timeout_ms ?? 20,
-                      fuel: draft.wasm_plugin?.fuel ?? null,
-                      max_memory_bytes: draft.wasm_plugin?.max_memory_bytes ?? 16_777_216,
-                      granted_capabilities: draft.wasm_plugin?.granted_capabilities ?? [],
-                      read_dirs: draft.wasm_plugin?.read_dirs ?? [],
-                      write_dirs: draft.wasm_plugin?.write_dirs ?? [],
-                      allowed_hosts: draft.wasm_plugin?.allowed_hosts ?? [],
-                      config: draft.wasm_plugin?.config ?? {},
-                    },
-                  });
-                }}
-                placeholder="Select plugin"
-              />
-
-              {data.pluginManifest ? (
-                <div className="rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-[11px] text-sky-950">
-                  <div className="font-medium">
-                    {data.pluginManifest.name} · {data.pluginManifest.version}
-                  </div>
-                  <div className="mt-1 text-sky-800">{data.pluginManifest.description}</div>
-                  <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-sky-700">
-                    Ports: {["default", ...data.pluginManifest.supported_output_ports].join(", ")}
-                  </div>
-                </div>
+              {!data.pluginManifest ? (
+                <InlineSelect
+                  value={draft.wasm_plugin?.plugin_id ?? ""}
+                  options={data.pluginManifestOptions}
+                  onChange={(value) => {
+                    commitNode({
+                      ...draft,
+                      wasm_plugin: {
+                        plugin_id: value,
+                        timeout_ms: draft.wasm_plugin?.timeout_ms ?? 20,
+                        fuel: draft.wasm_plugin?.fuel ?? null,
+                        max_memory_bytes: draft.wasm_plugin?.max_memory_bytes ?? 16_777_216,
+                        granted_capabilities: draft.wasm_plugin?.granted_capabilities ?? [],
+                        read_dirs: draft.wasm_plugin?.read_dirs ?? [],
+                        write_dirs: draft.wasm_plugin?.write_dirs ?? [],
+                        allowed_hosts: draft.wasm_plugin?.allowed_hosts ?? [],
+                        config: draft.wasm_plugin?.config ?? {},
+                      },
+                    });
+                  }}
+                  placeholder="Resolve plugin"
+                />
               ) : null}
+              <div className="rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-[11px] text-sky-950">
+                <div className="font-medium">
+                  {data.pluginManifest?.name ?? draft.wasm_plugin?.plugin_id ?? "Unknown plugin"}
+                  {data.pluginManifest ? ` · ${data.pluginManifest.version}` : ""}
+                </div>
+                <div className="mt-1 text-sky-800">
+                  Plugin ID: <span className="font-mono">{draft.wasm_plugin?.plugin_id ?? "-"}</span>
+                </div>
+                <div className="mt-1 text-sky-800">
+                  {data.pluginManifest?.description ?? "This plugin is not currently loaded in the registry."}
+                </div>
+                <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-sky-700">
+                  Ports: {["default", ...(data.pluginManifest?.supported_output_ports ?? [])].join(", ")}
+                </div>
+              </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <InlineInput
@@ -1778,6 +1806,7 @@ function createNode(
   type: RuleGraphNodeType,
   index: number,
   existingNodes: RuleGraphNode[],
+  pluginId?: string,
 ): RuleGraphNode {
   const base: RuleGraphNode = {
     id: nextNodeId(type, existingNodes, index + 1),
@@ -1828,7 +1857,7 @@ function createNode(
       return {
         ...base,
         wasm_plugin: {
-          plugin_id: "",
+          plugin_id: pluginId ?? "",
           timeout_ms: 20,
           fuel: null,
           max_memory_bytes: 16_777_216,
@@ -1854,6 +1883,23 @@ function nextNodeId(type: RuleGraphNodeType, existingNodes: RuleGraphNode[], see
     candidate = `${type}-${index}`;
   }
   return candidate;
+}
+
+function parseNodeLibraryItem(value: string): NodeLibraryItem | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<NodeLibraryItem>;
+    if (!parsed.type || !parsed.label) {
+      return null;
+    }
+    return {
+      type: parsed.type,
+      label: parsed.label,
+      shortLabel: parsed.shortLabel,
+      pluginId: parsed.pluginId,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function addRouterRule(node: RuleGraphNode): RuleGraphNode {
@@ -2152,6 +2198,13 @@ function labelForType(type: RuleGraphNodeType) {
   }
 }
 
+function labelForNode(node: RuleGraphNode, pluginManifest?: WasmPluginManifestSummary | null) {
+  if (node.type === "wasm_plugin") {
+    return pluginManifest?.name ?? node.wasm_plugin?.plugin_id ?? "Wasm Plugin";
+  }
+  return labelForType(node.type);
+}
+
 function shortLabelForType(type: RuleGraphNodeType) {
   switch (type) {
     case "condition":
@@ -2183,6 +2236,11 @@ function shortLabelForType(type: RuleGraphNodeType) {
     case "start":
       return "Start";
   }
+}
+
+function shortLabelForPlugin(name: string) {
+  const compact = name.replace(/[^a-zA-Z0-9]/g, "");
+  return (compact || "Wasm").slice(0, 8);
 }
 
 function toneForNodeType(type: RuleGraphNodeType): NodeTone {

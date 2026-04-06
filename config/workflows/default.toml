@@ -1,0 +1,151 @@
+[workflow]
+version = 1
+start_node_id = "start"
+
+[[workflow.nodes]]
+id = "start"
+type = "start"
+
+[workflow.nodes.position]
+x = 69.41704752740952
+y = 116.84062377466648
+
+[[workflow.nodes]]
+id = "note-8"
+type = "note"
+
+[workflow.nodes.position]
+x = 394.6578566256336
+y = -392.2541636495293
+
+[workflow.nodes.note_node]
+text = "你好"
+
+[[workflow.nodes]]
+id = "log-9"
+type = "log"
+
+[workflow.nodes.position]
+x = 437.9100934097669
+y = -91.45242103892916
+
+[workflow.nodes.log]
+message = """
+route=${ctx.path}
+kimi"""
+
+[[workflow.nodes]]
+id = "router-4"
+type = "router"
+
+[workflow.nodes.position]
+x = 241.79208652385245
+y = 236.1072699684284
+
+[workflow.nodes.router]
+fallback_node_id = "log-6"
+
+[[workflow.nodes.router.rules]]
+id = "rule-1"
+target_node_id = "log-9"
+
+[[workflow.nodes.router.rules.clauses]]
+source = "ctx.path"
+operator = "=="
+value = "/v1/chat/completions"
+
+[[workflow.nodes.router.rules]]
+id = "rule-2"
+target_node_id = "log-5"
+
+[[workflow.nodes.router.rules.clauses]]
+source = "ctx.path"
+operator = "=="
+value = "/v2"
+
+[[workflow.nodes]]
+id = "log-5"
+type = "log"
+
+[workflow.nodes.position]
+x = 836.2772919406019
+y = 473.8869108193056
+
+[workflow.nodes.log]
+message = """
+rout=${ctx.path}
+v2"""
+
+[[workflow.nodes]]
+id = "log-6"
+type = "log"
+
+[workflow.nodes.position]
+x = 956.7798301524388
+y = 793.6456145782744
+
+[workflow.nodes.log]
+message = "啥都没"
+
+[[workflow.nodes]]
+id = "end-7"
+type = "end"
+
+[workflow.nodes.position]
+x = 1409.727843408957
+y = 516.1318991288113
+
+[[workflow.nodes]]
+id = "select_model-8"
+type = "select_model"
+
+[workflow.nodes.position]
+x = 778.1776771868708
+y = -46.66375075153991
+
+[workflow.nodes.select_model]
+provider_id = "kimi"
+model_id = "kimi-k2"
+
+[[workflow.edges]]
+id = "start-next"
+source = "start"
+target = "router-4"
+
+[[workflow.edges]]
+id = "router-4-router:rule-1"
+source = "router-4"
+target = "log-9"
+source_handle = "router:rule-1"
+
+[[workflow.edges]]
+id = "router-4-router:rule-2"
+source = "router-4"
+target = "log-5"
+source_handle = "router:rule-2"
+
+[[workflow.edges]]
+id = "router-4-router:fallback"
+source = "router-4"
+target = "log-6"
+source_handle = "router:fallback"
+
+[[workflow.edges]]
+id = "log-5-next"
+source = "log-5"
+target = "end-7"
+
+[[workflow.edges]]
+id = "log-6-next"
+source = "log-6"
+target = "end-7"
+
+[[workflow.edges]]
+id = "log-9-next"
+source = "log-9"
+target = "select_model-8"
+
+[[workflow.edges]]
+id = "select_model-8-next"
+source = "select_model-8"
+target = "end-7"

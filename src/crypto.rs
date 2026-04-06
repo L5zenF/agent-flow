@@ -41,10 +41,7 @@ fn derive_keys(secret: &[u8]) -> Result<DerivedKeys, hkdf::InvalidLength> {
     Ok(DerivedKeys { header_key })
 }
 
-fn encrypt_secret_value(
-    value: &str,
-    header_key: &[u8; KEY_LEN],
-) -> Result<String, aes_gcm::Error> {
+fn encrypt_secret_value(value: &str, header_key: &[u8; KEY_LEN]) -> Result<String, aes_gcm::Error> {
     let cipher = Aes256Gcm::new_from_slice(header_key).expect("valid key size");
     let mut nonce_bytes = [0_u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce_bytes);
