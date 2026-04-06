@@ -381,9 +381,34 @@ pub fn resolve_workflows_dir(config_path: &Path, config: &GatewayConfig) -> Opti
     })
 }
 
+pub fn resolve_workflow_path(
+    config_path: &Path,
+    config: &GatewayConfig,
+    workflow_file: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let workflows_dir = resolve_workflows_dir(config_path, config)
+        .ok_or("workflows_dir must be set when workflows are present")?;
+    Ok(workflows_dir.join(workflow_file))
+}
+
 pub fn load_workflow_file(path: &Path) -> Result<WorkflowFileConfig, Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     Ok(toml::from_str(&raw)?)
+}
+
+pub fn save_workflow_file_atomic(
+    path: &Path,
+    workflow: &WorkflowFileConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let serialized = toml::to_string_pretty(workflow)?;
+    let temp_path = path.with_extension("toml.tmp");
+    std::fs::write(&temp_path, serialized)?;
+    std::fs::rename(temp_path, path)?;
+    Ok(())
 }
 
 pub fn load_workflow_set(
