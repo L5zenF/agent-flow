@@ -1404,14 +1404,6 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
           {draft.type === "wasm_plugin" || draft.type === "match" ? (
             <div className="space-y-2">
-              <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
-                <div className="min-w-0">
-                  <p className="line-clamp-4 text-[12px] leading-5 text-zinc-600">
-                    {describeWasmPlugin(data.pluginManifest, draft)}
-                  </p>
-                </div>
-              </div>
-
               {draft.type === "wasm_plugin" && wasmRuntimeConfig && wasmSchemaFields.length > 0 ? (
                 <div className="space-y-3 rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
                   {wasmSchemaFields.map((field) => {
@@ -1474,10 +1466,6 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   })}
                 </div>
               ) : null}
-
-              <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-5 text-zinc-500">
-                Use the plugin button for permissions and runtime limits.
-              </div>
             </div>
           ) : null}
 
