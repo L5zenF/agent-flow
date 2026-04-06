@@ -170,6 +170,23 @@ export type RuleGraphConfig = {
   edges: RuleGraphEdge[];
 };
 
+export type WorkflowIndexEntry = {
+  id: string;
+  name: string;
+  file: string;
+  description?: string | null;
+};
+
+export type WorkflowSummary = WorkflowIndexEntry & {
+  is_active: boolean;
+  node_count: number;
+  edge_count: number;
+};
+
+export type WorkflowDocument = {
+  workflow: RuleGraphConfig;
+};
+
 export type GatewayConfig = {
   listen: string;
   admin_listen: string;
@@ -178,6 +195,9 @@ export type GatewayConfig = {
   models: ModelConfig[];
   routes: RouteConfig[];
   header_rules: HeaderRuleConfig[];
+  workflows_dir?: string | null;
+  active_workflow_id?: string | null;
+  workflows: WorkflowIndexEntry[];
   rule_graph?: RuleGraphConfig | null;
 };
 
@@ -202,6 +222,9 @@ export const emptyConfig = (): GatewayConfig => ({
   models: [],
   routes: [],
   header_rules: [],
+  workflows_dir: "workflows",
+  active_workflow_id: null,
+  workflows: [],
   rule_graph: {
     version: 1,
     start_node_id: "start",

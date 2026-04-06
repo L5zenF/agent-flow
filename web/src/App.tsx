@@ -1,23 +1,72 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { CircleOff, Plus, RefreshCw, Save, Settings2, X } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  CircleOff,
+  FolderOpen,
+  Plus,
+  RefreshCw,
+  Save,
+  Settings2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { api } from "@/lib/api";
-import { emptyConfig, type GatewayConfig, type WasmPluginManifestSummary } from "@/lib/types";
+import {
+  emptyConfig,
+  type GatewayConfig,
+  type WasmPluginManifestSummary,
+  type WorkflowDocument,
+  type WorkflowSummary,
+} from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RuleGraphEditor } from "@/components/rule-graph-editor";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+
+type ConfigAction = React.SetStateAction<GatewayConfig>;
 
 export default function App() {
   const [config, setConfig] = useState<GatewayConfig>(emptyConfig);
+  const [workflowSummaries, setWorkflowSummaries] = useState<WorkflowSummary[]>([]);
+  const [openedWorkflowId, setOpenedWorkflowId] = useState<string | null>(null);
+  const [openedWorkflow, setOpenedWorkflow] = useState<WorkflowDocument | null>(null);
   const [pluginManifests, setPluginManifests] = useState<WasmPluginManifestSummary[]>([]);
   const [status, setStatus] = useState("Loading...");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
+  const [newWorkflowDraft, setNewWorkflowDraft] = useState({
+    id: "",
+    name: "",
+    description: "",
+  });
   const latestConfigRef = useRef(config);
+  const latestOpenedWorkflowRef = useRef(openedWorkflow);
+  const latestOpenedWorkflowIdRef = useRef(openedWorkflowId);
 
   latestConfigRef.current = config;
+  latestOpenedWorkflowRef.current = openedWorkflow;
+  latestOpenedWorkflowIdRef.current = openedWorkflowId;
+
+  const openedWorkflowSummary = useMemo(
+    () => workflowSummaries.find((workflow) => workflow.id === openedWorkflowId) ?? null,
+    [openedWorkflowId, workflowSummaries],
+  );
+
+  const editorConfig = useMemo<GatewayConfig>(() => {
+    if (!openedWorkflow) {
+      return config;
+    }
+
+    return {
+      ...config,
+      rule_graph: openedWorkflow.workflow,
+    };
+  }, [config, openedWorkflow]);
 
   useEffect(() => {
     void load();
@@ -36,17 +85,131 @@ export default function App() {
     });
   }
 
-  async function load() {
+  function applyEditorConfig(action: ConfigAction) {
+    const currentWorkflow = latestOpenedWorkflowRef.current;
+    const baseConfig: GatewayConfig = currentWorkflow
+      ? {
+          ...latestConfigRef.current,
+          rule_graph: currentWorkflow.workflow,
+        }
+      : latestConfigRef.current;
+    const nextConfig = typeof action === "function" ? action(baseConfig) : action;
+
+    setConfig(stripRuleGraph(nextConfig));
+    if (currentWorkflow && nextConfig.rule_graph) {
+      setOpenedWorkflow({
+        workflow: nextConfig.rule_graph,
+      });
+    }
+  }
+
+  async function load(targetWorkflowId?: string | null) {
     setBusy(true);
     try {
-      const next = await api.getConfig();
-      const nextPlugins = await api.getPlugins();
-      setConfig(next);
+      const [nextConfig, nextWorkflows, nextPlugins] = await Promise.all([
+        api.getConfig(),
+        api.getWorkflows(),
+        api.getPlugins(),
+      ]);
+
+      setConfig(stripRuleGraph(nextConfig));
+      setWorkflowSummaries(nextWorkflows);
       setPluginManifests(nextPlugins);
-      setStatus("Config loaded from admin API.");
+
+      const workflowId =
+        targetWorkflowId === undefined ? latestOpenedWorkflowIdRef.current : targetWorkflowId;
+      if (workflowId) {
+        try {
+          const nextWorkflow = await api.getWorkflow(workflowId);
+          setOpenedWorkflowId(workflowId);
+          setOpenedWorkflow(nextWorkflow);
+          setStatus(`Workflow "${workflowId}" loaded.`);
+        } catch (error) {
+          setOpenedWorkflowId(null);
+          setOpenedWorkflow(null);
+          setStatus(
+            error instanceof Error
+              ? `${error.message} Showing workflow gallery instead.`
+              : "Failed to load workflow. Showing workflow gallery instead.",
+          );
+        }
+      } else {
+        setOpenedWorkflowId(null);
+        setOpenedWorkflow(null);
+        setStatus("Workflow gallery loaded.");
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to load config.");
+      setStatus(error instanceof Error ? error.message : "Failed to load admin state.");
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openWorkflow(id: string) {
+    setBusy(true);
+    try {
+      const workflow = await api.getWorkflow(id);
+      setOpenedWorkflowId(id);
+      setOpenedWorkflow(workflow);
+      setStatus(`Workflow "${id}" opened.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to open workflow.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function activateWorkflow(id: string) {
+    setBusy(true);
+    try {
+      const summary = await api.activateWorkflow(id);
+      setWorkflowSummaries((current) =>
+        current.map((workflow) => ({
+          ...workflow,
+          is_active: workflow.id === summary.id,
+        })),
+      );
+      setConfig((current) => ({
+        ...current,
+        active_workflow_id: summary.id,
+      }));
+      setStatus(`Workflow "${summary.name}" is now active.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to activate workflow.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createWorkflow() {
+    setBusy(true);
+    try {
+      const created = await api.createWorkflow({
+        id: newWorkflowDraft.id,
+        name: newWorkflowDraft.name,
+        description: newWorkflowDraft.description || null,
+      });
+      setWorkflowSummaries((current) => [...current, created]);
+      setConfig((current) => ({
+        ...current,
+        active_workflow_id: created.is_active ? created.id : current.active_workflow_id,
+        workflows: current.workflows.some((workflow) => workflow.id === created.id)
+          ? current.workflows
+          : [
+              ...current.workflows,
+              {
+                id: created.id,
+                name: created.name,
+                file: created.file,
+                description: created.description ?? null,
+              },
+            ],
+      }));
+      setNewWorkflowDraft({ id: "", name: "", description: "" });
+      setNewWorkflowOpen(false);
+      await openWorkflow(created.id);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to create workflow.");
       setBusy(false);
     }
   }
@@ -55,8 +218,27 @@ export default function App() {
     setBusy(true);
     try {
       await flushPendingEditorState();
-      await api.saveConfig(latestConfigRef.current);
-      setStatus("Config saved.");
+
+      const workflowId = latestOpenedWorkflowIdRef.current;
+      const currentWorkflow = latestOpenedWorkflowRef.current;
+      if (workflowId && currentWorkflow) {
+        const savedWorkflow = await api.saveWorkflow(workflowId, currentWorkflow);
+        setOpenedWorkflow(savedWorkflow);
+        setWorkflowSummaries((current) =>
+          current.map((workflow) =>
+            workflow.id === workflowId
+              ? {
+                  ...workflow,
+                  node_count: savedWorkflow.workflow.nodes.length,
+                  edge_count: savedWorkflow.workflow.edges.length,
+                }
+              : workflow,
+          ),
+        );
+      }
+
+      await api.saveConfig(stripRuleGraph(latestConfigRef.current));
+      setStatus(workflowId ? `Workflow "${workflowId}" and config saved.` : "Config saved.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Save failed.");
     } finally {
@@ -72,6 +254,12 @@ export default function App() {
     setSettingsOpen(false);
   }
 
+  function closeWorkflow() {
+    setOpenedWorkflowId(null);
+    setOpenedWorkflow(null);
+    setStatus("Workflow gallery ready.");
+  }
+
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <div className="flex min-h-screen flex-col">
@@ -84,7 +272,7 @@ export default function App() {
                   LLM Gateway
                 </h1>
                 <p className="mt-0.5 truncate text-sm text-zinc-500">
-                  Canvas-first admin shell for the rule graph workspace.
+                  Workflow gallery for opening, activating, and editing rule graph canvases.
                 </p>
               </div>
             </div>
@@ -92,10 +280,10 @@ export default function App() {
               <TopBarButton label="Settings" onClick={openSettings}>
                 <Settings2 className="h-4 w-4" />
               </TopBarButton>
-              <TopBarButton label="Load config" onClick={load} disabled={busy}>
+              <TopBarButton label="Reload admin state" onClick={() => void load()} disabled={busy}>
                 <RefreshCw className="h-4 w-4" />
               </TopBarButton>
-              <TopBarButton label="Save config" onClick={save} disabled={busy}>
+              <TopBarButton label="Save" onClick={() => void save()} disabled={busy}>
                 <Save className="h-4 w-4" />
               </TopBarButton>
             </div>
@@ -109,19 +297,307 @@ export default function App() {
         </header>
 
         <main className="flex-1 px-3 pb-3 pt-2 lg:px-4">
-          <RuleGraphEditor
-            config={config}
-            setConfig={setConfig}
-            pluginManifests={pluginManifests}
-          />
+          {openedWorkflow && openedWorkflowSummary ? (
+            <WorkflowEditorShell
+              summary={openedWorkflowSummary}
+              config={editorConfig}
+              setConfig={applyEditorConfig}
+              pluginManifests={pluginManifests}
+              onBack={closeWorkflow}
+              onSetActive={() => void activateWorkflow(openedWorkflowSummary.id)}
+            />
+          ) : (
+            <WorkflowGallery
+              workflows={workflowSummaries}
+              busy={busy}
+              onOpen={(id) => void openWorkflow(id)}
+              onActivate={(id) => void activateWorkflow(id)}
+              onCreate={() => setNewWorkflowOpen(true)}
+            />
+          )}
         </main>
 
         <SettingsModal
-          config={config}
+          config={editorConfig}
           open={settingsOpen}
-          setConfig={setConfig}
+          setConfig={applyEditorConfig}
           onClose={closeSettings}
         />
+        <NewWorkflowModal
+          open={newWorkflowOpen}
+          busy={busy}
+          draft={newWorkflowDraft}
+          onDraftChange={setNewWorkflowDraft}
+          onCreate={() => void createWorkflow()}
+          onClose={() => setNewWorkflowOpen(false)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function WorkflowGallery({
+  workflows,
+  busy,
+  onOpen,
+  onActivate,
+  onCreate,
+}: {
+  workflows: WorkflowSummary[];
+  busy: boolean;
+  onOpen: (id: string) => void;
+  onActivate: (id: string) => void;
+  onCreate: () => void;
+}) {
+  const orderedWorkflows = useMemo(
+    () =>
+      [...workflows].sort((left, right) => {
+        if (left.is_active !== right.is_active) {
+          return left.is_active ? -1 : 1;
+        }
+        return left.name.localeCompare(right.name);
+      }),
+    [workflows],
+  );
+
+  return (
+    <div className="mx-auto flex max-w-7xl flex-col gap-4">
+      <section className="rounded-[28px] border border-zinc-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(244,244,245,0.92)_45%,rgba(228,232,240,0.92))] p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+              Workflow Gallery
+            </div>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-950">
+              Choose the workflow canvas you want to work on.
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-zinc-600">
+              Global settings stay available from the top bar. Opening a workflow switches into the
+              existing rule graph editor for that document only.
+            </p>
+          </div>
+          <Button className="gap-2 self-start lg:self-auto" onClick={onCreate} disabled={busy}>
+            <Plus className="h-4 w-4" />
+            New Workflow
+          </Button>
+        </div>
+      </section>
+
+      {orderedWorkflows.length === 0 ? (
+        <Card className="rounded-[24px] border-dashed border-zinc-300 bg-white/90 p-10 text-center shadow-none">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 text-zinc-500">
+            <Sparkles className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 text-lg font-semibold text-zinc-900">No workflows yet</h3>
+          <p className="mx-auto mt-2 max-w-md text-sm text-zinc-500">
+            Create the first workflow to start routing requests through the graph editor.
+          </p>
+          <div className="mt-6">
+            <Button onClick={onCreate} disabled={busy}>
+              <Plus className="h-4 w-4" />
+              New Workflow
+            </Button>
+          </div>
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          {orderedWorkflows.map((workflow) => (
+            <Card
+              key={workflow.id}
+              className="rounded-[24px] border border-zinc-200/80 bg-white/90 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.06)]"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="truncate text-lg font-semibold text-zinc-950">{workflow.name}</div>
+                    {workflow.is_active ? <Badge>Active</Badge> : <Badge variant="secondary">Draft</Badge>}
+                  </div>
+                  <div className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                    {workflow.id}
+                  </div>
+                </div>
+                <div className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-600">
+                  {workflow.node_count} nodes
+                </div>
+              </div>
+
+              <p className="mt-4 min-h-12 text-sm leading-6 text-zinc-600">
+                {workflow.description?.trim() || "No description yet."}
+              </p>
+
+              <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 text-sm text-zinc-600">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Edges</span>
+                  <span className="font-medium text-zinc-900">{workflow.edge_count}</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span>File</span>
+                  <span className="truncate font-mono text-xs text-zinc-500">{workflow.file}</span>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Button className="gap-2" onClick={() => onOpen(workflow.id)} disabled={busy}>
+                  <FolderOpen className="h-4 w-4" />
+                  Open Workflow
+                </Button>
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => onActivate(workflow.id)}
+                  disabled={busy || workflow.is_active}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Set Active
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WorkflowEditorShell({
+  summary,
+  config,
+  setConfig,
+  pluginManifests,
+  onBack,
+  onSetActive,
+}: {
+  summary: WorkflowSummary;
+  config: GatewayConfig;
+  setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
+  pluginManifests: WasmPluginManifestSummary[];
+  onBack: () => void;
+  onSetActive: () => void;
+}) {
+  return (
+    <div className="mx-auto flex max-w-7xl flex-col gap-3">
+      <section className="rounded-[24px] border border-zinc-200 bg-white/88 px-4 py-4 shadow-[0_20px_50px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" className="gap-2" onClick={onBack}>
+                <ArrowLeft className="h-4 w-4" />
+                Back to Gallery
+              </Button>
+              {summary.is_active ? <Badge>Active Workflow</Badge> : <Badge variant="secondary">Inactive</Badge>}
+            </div>
+            <h2 className="mt-3 truncate text-2xl font-semibold tracking-tight text-zinc-950">
+              {summary.name}
+            </h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              {summary.description?.trim() || "This workflow does not have a description yet."}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-500">
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 font-mono">
+                {summary.id}
+              </span>
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 font-mono">
+                {summary.file}
+              </span>
+            </div>
+          </div>
+          {!summary.is_active ? (
+            <Button variant="outline" className="gap-2 self-start lg:self-auto" onClick={onSetActive}>
+              <CheckCircle2 className="h-4 w-4" />
+              Set Active
+            </Button>
+          ) : null}
+        </div>
+      </section>
+
+      <RuleGraphEditor config={config} setConfig={setConfig} pluginManifests={pluginManifests} />
+    </div>
+  );
+}
+
+function NewWorkflowModal({
+  open,
+  busy,
+  draft,
+  onDraftChange,
+  onCreate,
+  onClose,
+}: {
+  open: boolean;
+  busy: boolean;
+  draft: {
+    id: string;
+    name: string;
+    description: string;
+  };
+  onDraftChange: React.Dispatch<
+    React.SetStateAction<{
+      id: string;
+      name: string;
+      description: string;
+    }>
+  >;
+  onCreate: () => void;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 p-4">
+      <div className="w-full max-w-xl rounded-3xl border border-zinc-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4 sm:px-6">
+          <div>
+            <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+              New Workflow
+            </div>
+            <div className="mt-1 text-lg font-semibold text-zinc-900">Create a workflow document</div>
+            <p className="mt-1 text-sm text-zinc-500">
+              A new workflow file will be added to the indexed workflow gallery.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-5 py-5 sm:px-6">
+          <Field
+            label="Workflow ID"
+            value={draft.id}
+            onChange={(value) => onDraftChange((current) => ({ ...current, id: value }))}
+          />
+          <Field
+            label="Workflow Name"
+            value={draft.name}
+            onChange={(value) => onDraftChange((current) => ({ ...current, name: value }))}
+          />
+          <label className="block">
+            <Label>Description</Label>
+            <Textarea
+              value={draft.description}
+              onChange={(event) =>
+                onDraftChange((current) => ({ ...current, description: event.target.value }))
+              }
+              rows={4}
+              placeholder="Optional description for the gallery card."
+            />
+          </label>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-zinc-200 px-5 py-4 sm:px-6">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={onCreate} disabled={busy}>
+            Create Workflow
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -169,7 +645,7 @@ function SettingsModal({
         <div className="max-h-[calc(85vh-88px)] space-y-5 overflow-y-auto px-5 py-5 sm:px-6">
           <SettingsSection
             title="Global config"
-            description="These values feed the same config object used by the canvas editor and save flow."
+            description="These values feed the same config object used by the workflow gallery and canvas editor."
           >
             <div className="grid gap-4 md:grid-cols-2">
               <Field
@@ -199,14 +675,14 @@ function SettingsModal({
 
           <SettingsSection
             title="Providers"
-            description="Manage upstream providers and their default headers without leaving the canvas shell."
+            description="Manage upstream providers and their default headers without leaving the admin shell."
           >
             <ProvidersSection config={config} setConfig={setConfig} />
           </SettingsSection>
 
           <SettingsSection
             title="Models"
-            description="Attach models to providers using the shared config state consumed by the graph inspector."
+            description="Attach models to providers using the same shared config state consumed by the graph inspector."
           >
             <ModelsSection config={config} setConfig={setConfig} />
           </SettingsSection>
@@ -760,4 +1236,9 @@ function Field({
       <Input value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
+}
+
+function stripRuleGraph(config: GatewayConfig): GatewayConfig {
+  const { rule_graph: _ruleGraph, ...rest } = config;
+  return rest;
 }
