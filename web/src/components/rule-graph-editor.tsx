@@ -236,8 +236,8 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   );
   const modalWasmManifest = useMemo(
     () =>
-      modalWasmNode && getWasmNodeConfig(modalWasmNode)?.plugin_id
-        ? (pluginManifestMap.get(getWasmNodeConfig(modalWasmNode)!.plugin_id) ?? null)
+      modalWasmNode && getWasmRuntimeConfig(modalWasmNode)?.plugin_id
+        ? (pluginManifestMap.get(getWasmRuntimeConfig(modalWasmNode)!.plugin_id) ?? null)
         : null,
     [modalWasmNode, pluginManifestMap],
   );
@@ -254,8 +254,8 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           issueCount: (validation.nodeIssues[node.id] ?? []).length,
           unreachable: validation.unreachableNodeIds.has(node.id),
           validationIssues: validation.nodeIssues[node.id] ?? [],
-          pluginManifest: getWasmNodeConfig(node)?.plugin_id
-            ? (pluginManifestMap.get(getWasmNodeConfig(node)!.plugin_id) ?? null)
+          pluginManifest: getWasmRuntimeConfig(node)?.plugin_id
+            ? (pluginManifestMap.get(getWasmRuntimeConfig(node)!.plugin_id) ?? null)
             : null,
           pluginManifestOptions,
           providerOptions,
@@ -471,16 +471,14 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
     }
 
     const nextGraph =
-      sourceNode.type === "router"
+      sourceNode.type === "router" || sourceNode.type === "wasm_match"
         ? syncRouterTargetsWithEdges(
             setEdgeTarget(graph, connection.source, connection.sourceHandle ?? null, connection.target),
           )
         : setEdgeTarget(
             graph,
             connection.source,
-            sourceNode.type === "condition" ||
-            sourceNode.type === "wasm_plugin" ||
-            sourceNode.type === "wasm_match"
+            sourceNode.type === "condition" || sourceNode.type === "wasm_plugin"
               ? connection.sourceHandle ?? null
               : null,
             connection.target,
@@ -652,11 +650,13 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
   const routerBranches = draft.router?.rules ?? [];
   const routerHandleCount = routerBranches.length + 1;
   const pluginOutputPorts =
-    (data.nodeType === "wasm_plugin" || data.nodeType === "wasm_match")
+    data.nodeType === "wasm_plugin"
       ? data.pluginManifest?.supported_output_ports?.length
         ? Array.from(new Set(["default", ...data.pluginManifest.supported_output_ports]))
         : ["default"]
       : [];
+  const wasmMatchBranches = draft.wasm_match?.branches ?? [];
+  const wasmMatchHandleCount = wasmMatchBranches.length + 1;
 
   useEffect(() => {
     setDraft(data.node);
@@ -756,7 +756,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
             className="!h-3 !w-3 !border-2 !border-white"
           />
         </>
-      ) : data.nodeType === "wasm_plugin" || data.nodeType === "wasm_match" ? (
+      ) : data.nodeType === "wasm_plugin" ? (
         <>
           {pluginOutputPorts.map((port, index) => (
             <Handle
@@ -773,6 +773,36 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
               className="!h-3 !w-3 !border-2 !border-white"
             />
           ))}
+        </>
+      ) : data.nodeType === "wasm_match" ? (
+        <>
+          {wasmMatchBranches.map((branch, index) => (
+            <Handle
+              key={branch.id}
+              id={`wasm_match:${branch.id}`}
+              type="source"
+              position={Position.Right}
+              title={`Branch: ${branch.id}`}
+              aria-label={`Branch ${branch.id}`}
+              style={{
+                top: `${((index + 1) / (wasmMatchHandleCount + 1)) * 100}%`,
+                backgroundColor: "#0284c7",
+              }}
+              className="!h-3 !w-3 !border-2 !border-white"
+            />
+          ))}
+          <Handle
+            id="wasm_match:fallback"
+            type="source"
+            position={Position.Right}
+            title="Fallback"
+            aria-label="Fallback"
+            style={{
+              top: `${(wasmMatchHandleCount / (wasmMatchHandleCount + 1)) * 100}%`,
+              backgroundColor: "#475569",
+            }}
+            className="!h-3 !w-3 !border-2 !border-white"
+          />
         </>
       ) : data.nodeType !== "end" && data.nodeType !== "note" ? (
         <Handle
@@ -850,7 +880,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                       Plugin Details
                     </div>
                       <div className="mt-2 text-sm font-semibold text-zinc-950">
-                      {data.pluginManifest?.name ?? getWasmNodeConfig(draft)?.plugin_id ?? "Unknown plugin"}
+                      {data.pluginManifest?.name ?? getWasmRuntimeConfig(draft)?.plugin_id ?? "Unknown plugin"}
                       </div>
                     <p className="mt-2 text-[12px] leading-5 text-zinc-600">
                       {data.pluginManifest?.description || "Custom wasm plugin without a registry description."}
@@ -872,8 +902,8 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                       Uses
                     </div>
                     <div className="mt-1 flex flex-wrap gap-1.5">
-                      {getWasmNodeConfig(draft)?.granted_capabilities.length ? (
-                        getWasmNodeConfig(draft)!.granted_capabilities.map((capability) => (
+                      {getWasmRuntimeConfig(draft)?.granted_capabilities.length ? (
+                        getWasmRuntimeConfig(draft)!.granted_capabilities.map((capability) => (
                           <span
                             key={capability}
                             className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-700"
@@ -1307,6 +1337,76 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
             </div>
           ) : null}
 
+          {draft.type === "wasm_match" ? (
+            <div className="space-y-2">
+              <div className="rounded-xl border border-sky-200 bg-sky-50/70 px-2.5 py-2 text-[11px] text-sky-900">
+                Wasm decides the branch id. Drag each branch handle on the right edge to its target.
+              </div>
+              {(draft.wasm_match?.branches ?? []).map((branch, branchIndex) => (
+                <div key={branch.id} className="rounded-2xl border border-zinc-200/80 bg-white/70 p-2">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-sky-900 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
+                      <span className="inline-flex h-2 w-2 rounded-full bg-white/90" />
+                      Branch {branchIndex + 1}
+                    </span>
+                    <span className="min-w-0 truncate rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] text-sky-700">
+                      {branch.target_node_id || "Drag to target"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        commitNode({
+                          ...draft,
+                          wasm_match: {
+                            ...draft.wasm_match!,
+                            branches: (draft.wasm_match?.branches ?? []).filter((_, index) => index !== branchIndex),
+                            fallback_node_id: draft.wasm_match?.fallback_node_id ?? null,
+                          },
+                        });
+                      }}
+                      className="nodrag nopan ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <InlineInput
+                    value={branch.expr}
+                    placeholder='expr, e.g. ctx.header.x-target == "chat"'
+                    suggestions={data.templateSuggestions}
+                    onChange={(value) =>
+                      setDraft(updateWasmMatchBranch(draft, branchIndex, { expr: value }))
+                    }
+                    onCommit={(value) =>
+                      commitNode(updateWasmMatchBranch(draft, branchIndex, { expr: value }))
+                    }
+                  />
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  commitNode(addWasmMatchBranch(draft));
+                }}
+                className="nodrag nopan inline-flex h-9 w-full items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/60 text-sm text-zinc-700 transition hover:border-zinc-500 hover:text-zinc-900"
+              >
+                Add Branch
+              </button>
+              <div className="space-y-2 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-2">
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
+                    <span className="inline-flex h-2 w-2 rounded-full bg-white/90" />
+                    Fallback
+                  </div>
+                  <span className="min-w-0 truncate rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700">
+                    {draft.wasm_match?.fallback_node_id || "Drag to target"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {(draft.type === "set_header" || draft.type === "set_header_if_absent") && (
             <div className="grid grid-cols-1 gap-2">
               <InlineInput
@@ -1484,7 +1584,7 @@ function WasmConfigModal({
 }) {
   if (!node || !isWasmNodeType(node.type)) return null;
 
-  const plugin = getWasmNodeConfig(node)!;
+  const plugin = getWasmRuntimeConfig(node)!;
   const outputPorts = pluginManifest?.supported_output_ports?.length
     ? Array.from(new Set(["default", ...pluginManifest.supported_output_ports]))
     : ["default"];
@@ -1530,7 +1630,7 @@ function WasmConfigModal({
             options={pluginManifestOptions}
             onChange={(value) =>
               onUpdateNode({
-                ...updateWasmNodeConfig(node, {
+                ...updateWasmRuntimeConfig(node, {
                   ...plugin,
                   plugin_id: value,
                 }),
@@ -1575,7 +1675,7 @@ function WasmConfigModal({
                   type="button"
                   onClick={() =>
                     onUpdateNode({
-                      ...updateWasmNodeConfig(node, {
+                      ...updateWasmRuntimeConfig(node, {
                         ...plugin,
                         granted_capabilities: nextCapabilities,
                       }),
@@ -1604,7 +1704,7 @@ function WasmConfigModal({
                 placeholder={"plugins-data/common\ndata/rules"}
                 onChange={(value) =>
                   onUpdateNode({
-                    ...updateWasmNodeConfig(node, {
+                    ...updateWasmRuntimeConfig(node, {
                       ...plugin,
                       read_dirs: parseTextareaList(value),
                     }),
@@ -1612,7 +1712,7 @@ function WasmConfigModal({
                 }
                 onCommit={(value) =>
                   onUpdateNode({
-                    ...updateWasmNodeConfig(node, {
+                    ...updateWasmRuntimeConfig(node, {
                       ...plugin,
                       read_dirs: parseTextareaList(value),
                     }),
@@ -1625,7 +1725,7 @@ function WasmConfigModal({
                 placeholder={"plugins-data/runtime"}
                 onChange={(value) =>
                   onUpdateNode({
-                    ...updateWasmNodeConfig(node, {
+                    ...updateWasmRuntimeConfig(node, {
                       ...plugin,
                       write_dirs: parseTextareaList(value),
                     }),
@@ -1633,7 +1733,7 @@ function WasmConfigModal({
                 }
                 onCommit={(value) =>
                   onUpdateNode({
-                    ...updateWasmNodeConfig(node, {
+                    ...updateWasmRuntimeConfig(node, {
                       ...plugin,
                       write_dirs: parseTextareaList(value),
                     }),
@@ -1651,7 +1751,7 @@ function WasmConfigModal({
                 placeholder={"api.example.com:443\n127.0.0.1:8080"}
                 onChange={(value) =>
                   onUpdateNode({
-                    ...updateWasmNodeConfig(node, {
+                    ...updateWasmRuntimeConfig(node, {
                       ...plugin,
                       allowed_hosts: parseTextareaList(value),
                     }),
@@ -1659,7 +1759,7 @@ function WasmConfigModal({
                 }
                 onCommit={(value) =>
                   onUpdateNode({
-                    ...updateWasmNodeConfig(node, {
+                    ...updateWasmRuntimeConfig(node, {
                       ...plugin,
                       allowed_hosts: parseTextareaList(value),
                     }),
@@ -1679,7 +1779,7 @@ function WasmConfigModal({
             placeholder="20"
             onChange={(value) =>
               onUpdateNode({
-                ...updateWasmNodeConfig(node, {
+                ...updateWasmRuntimeConfig(node, {
                   ...plugin,
                   timeout_ms: value === "" ? 0 : Number(value),
                 }),
@@ -1687,7 +1787,7 @@ function WasmConfigModal({
             }
             onCommit={(value) =>
               onUpdateNode({
-                ...updateWasmNodeConfig(node, {
+                ...updateWasmRuntimeConfig(node, {
                   ...plugin,
                   timeout_ms: value === "" ? 0 : Number(value),
                 }),
@@ -1700,7 +1800,7 @@ function WasmConfigModal({
             placeholder="optional fuel"
             onChange={(value) =>
               onUpdateNode({
-                ...updateWasmNodeConfig(node, {
+                ...updateWasmRuntimeConfig(node, {
                   ...plugin,
                   fuel: value === "" ? null : Number(value),
                 }),
@@ -1708,7 +1808,7 @@ function WasmConfigModal({
             }
             onCommit={(value) =>
               onUpdateNode({
-                ...updateWasmNodeConfig(node, {
+                ...updateWasmRuntimeConfig(node, {
                   ...plugin,
                   fuel: value === "" ? null : Number(value),
                 }),
@@ -1721,7 +1821,7 @@ function WasmConfigModal({
             placeholder="16777216"
             onChange={(value) =>
               onUpdateNode({
-                ...updateWasmNodeConfig(node, {
+                ...updateWasmRuntimeConfig(node, {
                   ...plugin,
                   max_memory_bytes: value === "" ? 0 : Number(value),
                 }),
@@ -1729,7 +1829,7 @@ function WasmConfigModal({
             }
             onCommit={(value) =>
               onUpdateNode({
-                ...updateWasmNodeConfig(node, {
+                ...updateWasmRuntimeConfig(node, {
                   ...plugin,
                   max_memory_bytes: value === "" ? 0 : Number(value),
                 }),
@@ -1745,7 +1845,7 @@ function WasmConfigModal({
           placeholder={'{\n  "prompt": "classify request intent"\n}'}
           onChange={(value) =>
             onUpdateNode({
-              ...updateWasmNodeConfig(node, {
+              ...updateWasmRuntimeConfig(node, {
                 ...plugin,
                 config: parsePluginConfig(value, plugin.config ?? {}),
               }),
@@ -1753,7 +1853,7 @@ function WasmConfigModal({
           }
           onCommit={(value) =>
             onUpdateNode({
-              ...updateWasmNodeConfig(node, {
+              ...updateWasmRuntimeConfig(node, {
                 ...plugin,
                 config: parsePluginConfig(value, plugin.config ?? {}),
               }),
@@ -1908,16 +2008,28 @@ function removeNodeFromGraph(graph: RuleGraphConfig, nodeId: string): RuleGraphC
 }
 
 function pruneInvalidRouterEdges(graph: RuleGraphConfig): RuleGraphConfig {
-  const allowedHandlesByNode = new Map(
-    graph.nodes
-      .filter((node) => node.type === "router" && node.router)
-      .map((node) => [
-        node.id,
-        new Set([
-          ...node.router!.rules.map((rule) => `router:${rule.id}`),
-          "router:fallback",
-        ]),
-      ]),
+  const allowedHandlesByNode = new Map<string, Set<string>>(
+    graph.nodes.flatMap((node) => {
+      if (node.type === "router" && node.router) {
+        return [[
+          node.id,
+          new Set([
+            ...node.router.rules.map((rule) => `router:${rule.id}`),
+            "router:fallback",
+          ]),
+        ]];
+      }
+      if (node.type === "wasm_match" && node.wasm_match) {
+        return [[
+          node.id,
+          new Set([
+            ...node.wasm_match.branches.map((branch) => `wasm_match:${branch.id}`),
+            "wasm_match:fallback",
+          ]),
+        ]];
+      }
+      return [];
+    }),
   );
 
   return {
@@ -1927,7 +2039,8 @@ function pruneInvalidRouterEdges(graph: RuleGraphConfig): RuleGraphConfig {
       if (!allowedHandles) {
         return true;
       }
-      if (!(edge.source_handle ?? "").startsWith("router:")) {
+      const sourceHandle = edge.source_handle ?? "";
+      if (!sourceHandle.startsWith("router:") && !sourceHandle.startsWith("wasm_match:")) {
         return true;
       }
       return allowedHandles.has(edge.source_handle ?? "");
@@ -1990,6 +2103,10 @@ function edgeLabelForHandle(sourceHandle: string | null) {
     const key = sourceHandle.slice("router:".length);
     return key === "fallback" ? "fallback" : key.replace(/^rule-/, "");
   }
+  if (sourceHandle?.startsWith("wasm_match:")) {
+    const key = sourceHandle.slice("wasm_match:".length);
+    return key === "fallback" ? "fallback" : key;
+  }
   return "";
 }
 
@@ -2015,6 +2132,32 @@ function syncRouterTargetsWithEdges(graph: RuleGraphConfig): RuleGraphConfig {
           fallback_node_id:
             graph.edges.find(
               (edge) => edge.source === node.id && (edge.source_handle ?? null) === "router:fallback",
+            )?.target ?? null,
+        },
+      };
+    }).map((node) => {
+      if (node.type !== "wasm_match" || !node.wasm_match) {
+        return node;
+      }
+
+      return {
+        ...node,
+        wasm_match: {
+          ...node.wasm_match,
+          branches: node.wasm_match.branches.map((branch) => ({
+            ...branch,
+            target_node_id:
+              graph.edges.find(
+                (edge) =>
+                  edge.source === node.id &&
+                  (edge.source_handle ?? null) === `wasm_match:${branch.id}`,
+              )?.target ?? "",
+          })),
+          fallback_node_id:
+            graph.edges.find(
+              (edge) =>
+                edge.source === node.id &&
+                (edge.source_handle ?? null) === "wasm_match:fallback",
             )?.target ?? null,
         },
       };
@@ -2101,6 +2244,14 @@ function createNode(
           write_dirs: [],
           allowed_hosts: [],
           config: {},
+          branches: [
+            {
+              id: "match",
+              expr: 'ctx.header.x-target == "chat"',
+              target_node_id: "",
+            },
+          ],
+          fallback_node_id: null,
         },
       };
     case "note":
@@ -2155,6 +2306,25 @@ function addRouterRule(node: RuleGraphNode): RuleGraphNode {
   };
 }
 
+function addWasmMatchBranch(node: RuleGraphNode): RuleGraphNode {
+  const existingBranches = node.wasm_match?.branches ?? [];
+  return {
+    ...node,
+    wasm_match: {
+      ...node.wasm_match!,
+      branches: [
+        ...existingBranches,
+        {
+          id: `branch-${existingBranches.length + 1}`,
+          expr: "",
+          target_node_id: "",
+        },
+      ],
+      fallback_node_id: node.wasm_match?.fallback_node_id ?? null,
+    },
+  };
+}
+
 function updateRouterClause(
   node: RuleGraphNode,
   ruleIndex: number,
@@ -2175,6 +2345,23 @@ function updateRouterClause(
           : rule,
       ),
       fallback_node_id: node.router?.fallback_node_id ?? null,
+    },
+  };
+}
+
+function updateWasmMatchBranch(
+  node: RuleGraphNode,
+  branchIndex: number,
+  patch: Partial<{ id: string; expr: string; target_node_id: string }>,
+): RuleGraphNode {
+  return {
+    ...node,
+    wasm_match: {
+      ...node.wasm_match!,
+      branches: (node.wasm_match?.branches ?? []).map((branch, currentBranchIndex) =>
+        currentBranchIndex === branchIndex ? { ...branch, ...patch } : branch,
+      ),
+      fallback_node_id: node.wasm_match?.fallback_node_id ?? null,
     },
   };
 }
@@ -2339,7 +2526,7 @@ function validateGraph(
     }
 
     if (node.type === "wasm_plugin" || node.type === "wasm_match") {
-      const wasmConfig = getWasmNodeConfig(node);
+      const wasmConfig = getWasmRuntimeConfig(node);
       const manifest = pluginManifests.find(
         (plugin) => plugin.id === (wasmConfig?.plugin_id ?? ""),
       );
@@ -2381,6 +2568,38 @@ function validateGraph(
         }
       } else if (wasmConfig?.allowed_hosts.length) {
         issues.push("Allowed hosts require the network capability.");
+      }
+
+      if (node.type === "wasm_match") {
+        const branches = node.wasm_match?.branches ?? [];
+        if (branches.length === 0) {
+          issues.push("At least one wasm match branch is required.");
+        }
+        const seenBranchIds = new Set<string>();
+        for (const branch of branches) {
+          if (!branch.id.trim()) {
+            issues.push("Wasm match branch id is required.");
+            continue;
+          }
+          if (!branch.expr.trim()) {
+            issues.push(`Wasm match branch '${branch.id}' expr is required.`);
+          }
+          if (seenBranchIds.has(branch.id)) {
+            issues.push(`Wasm match branch '${branch.id}' is duplicated.`);
+          }
+          seenBranchIds.add(branch.id);
+          if (!branch.target_node_id) {
+            issues.push(`Wasm match branch '${branch.id}' is missing a target.`);
+          } else if (!graph.nodes.some((item) => item.id === branch.target_node_id)) {
+            issues.push(`Wasm match branch '${branch.id}' target does not exist.`);
+          }
+        }
+        if (
+          node.wasm_match?.fallback_node_id &&
+          !graph.nodes.some((item) => item.id === node.wasm_match?.fallback_node_id)
+        ) {
+          issues.push("Wasm match fallback target does not exist.");
+        }
       }
     }
 
@@ -2440,17 +2659,33 @@ function isWasmNodeType(type: RuleGraphNodeType) {
   return type === "wasm_plugin" || type === "wasm_match";
 }
 
-function getWasmNodeConfig(node: RuleGraphNode) {
+function getWasmRuntimeConfig(node: RuleGraphNode) {
   if (node.type === "wasm_plugin") {
     return node.wasm_plugin ?? null;
   }
   if (node.type === "wasm_match") {
-    return node.wasm_match ?? null;
+    return node.wasm_match
+      ? {
+          plugin_id: node.wasm_match.plugin_id,
+          timeout_ms: node.wasm_match.timeout_ms,
+          fuel: node.wasm_match.fuel,
+          max_memory_bytes: node.wasm_match.max_memory_bytes,
+          granted_capabilities: node.wasm_match.granted_capabilities,
+          read_dirs: node.wasm_match.read_dirs,
+          write_dirs: node.wasm_match.write_dirs,
+          allowed_hosts: node.wasm_match.allowed_hosts,
+          config: node.wasm_match.config,
+        }
+      : null;
   }
   return null;
 }
 
-function updateWasmNodeConfig(
+function getWasmMatchConfig(node: RuleGraphNode) {
+  return node.type === "wasm_match" ? node.wasm_match ?? null : null;
+}
+
+function updateWasmRuntimeConfig(
   node: RuleGraphNode,
   config: NonNullable<RuleGraphNode["wasm_plugin"]>,
 ): RuleGraphNode {
@@ -2463,7 +2698,10 @@ function updateWasmNodeConfig(
   if (node.type === "wasm_match") {
     return {
       ...node,
-      wasm_match: config,
+      wasm_match: {
+        ...node.wasm_match!,
+        ...config,
+      },
     };
   }
   return node;
@@ -2471,7 +2709,7 @@ function updateWasmNodeConfig(
 
 function labelForNode(node: RuleGraphNode, pluginManifest?: WasmPluginManifestSummary | null) {
   if (node.type === "wasm_plugin" || node.type === "wasm_match") {
-    return pluginManifest?.name ?? getWasmNodeConfig(node)?.plugin_id ?? labelForType(node.type);
+    return pluginManifest?.name ?? getWasmRuntimeConfig(node)?.plugin_id ?? labelForType(node.type);
   }
   return labelForType(node.type);
 }
@@ -2485,7 +2723,7 @@ function describeWasmPlugin(
     return description;
   }
 
-  const pluginId = getWasmNodeConfig(node)?.plugin_id?.trim();
+  const pluginId = getWasmRuntimeConfig(node)?.plugin_id?.trim();
   if (!pluginId) {
     return "Runs a wasm plugin step inside the request flow.";
   }
@@ -2570,6 +2808,18 @@ function toneForNodeType(type: RuleGraphNodeType): NodeTone {
         minimap: "#2563eb",
         handle: "#2563eb",
         edge: "#2563eb",
+      };
+    case "route_provider":
+      return {
+        cardBorder: "border-cyan-300",
+        cardBg: "bg-cyan-200/86",
+        chipBg: "bg-cyan-100",
+        chipText: "text-cyan-900",
+        icon: "text-cyan-700",
+        libraryButton: "border-cyan-200 text-cyan-800 hover:border-cyan-500 hover:text-cyan-950",
+        minimap: "#0ea5e9",
+        handle: "#0ea5e9",
+        edge: "#0ea5e9",
       };
     case "rewrite_path":
       return {
@@ -2715,6 +2965,18 @@ function toneForNodeType(type: RuleGraphNodeType): NodeTone {
         handle: "#475569",
         edge: "#475569",
       };
+    default:
+      return {
+        cardBorder: "border-zinc-300",
+        cardBg: "bg-zinc-100/90",
+        chipBg: "bg-zinc-200",
+        chipText: "text-zinc-900",
+        icon: "text-zinc-700",
+        libraryButton: "border-zinc-200 text-zinc-700 hover:border-zinc-500 hover:text-zinc-900",
+        minimap: "#71717a",
+        handle: "#71717a",
+        edge: "#71717a",
+      };
   }
 }
 
@@ -2725,6 +2987,8 @@ function iconForLibraryNode(type: RuleGraphNodeType) {
       return <GitBranch className={iconClass} />;
     case "select_model":
       return <Split className={iconClass} />;
+    case "route_provider":
+      return <Route className={iconClass} />;
     case "rewrite_path":
       return <Route className={iconClass} />;
     case "set_context":
@@ -2751,6 +3015,8 @@ function iconForLibraryNode(type: RuleGraphNodeType) {
       return <Hand className={iconClass} />;
     case "start":
       return <ArrowRightLeft className={iconClass} />;
+    default:
+      return <Grip className={iconClass} />;
   }
 }
 

@@ -17,8 +17,9 @@ use tracing::{error, info, warn};
 use url::Url;
 use wasmtime::component::{Linker, ResourceTable};
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime_wasi::sockets::SocketAddrUse;
 use wasmtime_wasi::{
-    DirPerms, FilePerms, SocketAddrUse, WasiCtx, WasiCtxBuilder, WasiView, add_to_linker_sync,
+    DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
 };
 
 use self::exports::proxy_tools::proxy_node_plugin::node_plugin::{
@@ -36,125 +37,7 @@ use crate::rules::{RequestContext, build_header_map, evaluate_expression, render
 use crate::wasm_plugins::{LoadedPlugin, ManifestCapability, PluginRegistry};
 
 wasmtime::component::bindgen!({
-    inline: r#"
-        package proxy-tools:proxy-node-plugin@0.1.0;
-
-        interface node-plugin {
-          record request-header {
-            name: string,
-            value: string,
-          }
-
-          record context-entry {
-            key: string,
-            value: string,
-          }
-
-          record json-document {
-            json: string,
-          }
-
-          variant context-patch-op {
-            set(context-entry),
-            remove(string),
-          }
-
-          record context-patch {
-            ops: list<context-patch-op>,
-          }
-
-          variant header-op {
-            set(request-header),
-            append(request-header),
-            remove(string),
-          }
-
-          record path-rewrite {
-            path: string,
-          }
-
-          record next-port {
-            port: string,
-          }
-
-          variant log-level {
-            debug,
-            info,
-            warn,
-            error,
-          }
-
-          record log-entry {
-            level: log-level,
-            message: string,
-          }
-
-          variant capability-kind {
-            log,
-            fs,
-            network,
-          }
-
-          record capability-declaration {
-            kind: capability-kind,
-            required: bool,
-            scope: option<string>,
-            description: string,
-          }
-
-          record capability-grant {
-            kind: capability-kind,
-            allowed: bool,
-            scope: option<string>,
-          }
-
-          record plugin-manifest {
-            id: string,
-            name: string,
-            version: string,
-            description: string,
-            supported-output-ports: list<string>,
-            default-config-schema-hints: option<json-document>,
-            capabilities: list<capability-declaration>,
-          }
-
-          record node-config {
-            manifest: plugin-manifest,
-            grants: list<capability-grant>,
-            config: option<json-document>,
-          }
-
-          record execute-input {
-            request-method: string,
-            current-path: string,
-            request-headers: list<request-header>,
-            workflow-context: list<context-entry>,
-            selected-provider-id: string,
-            selected-model-id: string,
-            node-config: node-config,
-          }
-
-          record execute-output {
-            context-patch: option<context-patch>,
-            header-ops: list<header-op>,
-            path-rewrite: option<path-rewrite>,
-            next-port: option<next-port>,
-            logs: list<log-entry>,
-          }
-
-          variant execute-error {
-            denied(string),
-            invalid-input(string),
-            failed(string),
-          }
-
-          execute: func(input: execute-input) -> result<execute-output, execute-error>;
-        }
-
-        world proxy-node-plugin {
-          export node-plugin;
-        }
-    "#,
+    path: "wit",
     world: "proxy-node-plugin",
     ownership: Owning,
 });
@@ -282,12 +165,11 @@ struct PluginStoreData {
 static WASMTIME_PLUGIN_RUNTIME: WasmtimePluginRuntime = WasmtimePluginRuntime;
 
 impl WasiView for PluginStoreData {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -348,7 +230,7 @@ impl PluginNodeRuntime for WasmtimePluginRuntime {
         input: &RuntimeExecuteInput,
     ) -> Result<RuntimeExecuteOutput, String> {
         let mut linker = Linker::new(plugin.component().engine());
-        add_to_linker_sync(&mut linker).map_err(|error| {
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(|error| {
             format!(
                 "failed to wire WASI imports for plugin '{}': {error}",
                 plugin.plugin_id()
@@ -368,11 +250,9 @@ impl PluginNodeRuntime for WasmtimePluginRuntime {
             },
         );
         store.limiter(|state| &mut state.limits);
-        if let Some(fuel) = fuel {
-            store
-                .set_fuel(fuel)
-                .map_err(|error| format!("failed to set plugin fuel budget: {error}"))?;
-        }
+        store
+            .set_fuel(fuel.unwrap_or(u64::MAX))
+            .map_err(|error| format!("failed to set plugin fuel budget: {error}"))?;
         store.set_epoch_deadline(1);
         store.epoch_deadline_trap();
 
@@ -722,9 +602,7 @@ fn execute_rule_graph<'a>(
                 next_linear_edge(graph, current_id)?
             }
             RuleGraphNodeType::WasmPlugin => {
-                execute_wasm_runtime_node(
-                    graph,
-                    current_id,
+                let port = execute_wasm_runtime_node(
                     node.id.as_str(),
                     node.wasm_plugin
                         .as_ref()
@@ -740,28 +618,78 @@ fn execute_rule_graph<'a>(
                     &mut resolved_path,
                     &mut workflow_context,
                     &mut outgoing_headers,
-                )?
+                )?;
+                match port.as_deref() {
+                    Some(port) => {
+                        let plugin = plugin_registry
+                            .get(
+                                node.wasm_plugin
+                                    .as_ref()
+                                    .expect("wasm plugin config should exist")
+                                    .plugin_id
+                                    .as_str(),
+                            )
+                            .expect("plugin should exist after successful execution");
+                        if !plugin
+                            .manifest()
+                            .supported_output_ports
+                            .iter()
+                            .any(|item| item == port)
+                        {
+                            return Err(format!(
+                                "plugin '{}' returned unknown port '{}' for node '{}'",
+                                plugin.plugin_id(),
+                                port,
+                                node.id
+                            ));
+                        }
+                        Some(next_condition_edge(graph, current_id, port)?.ok_or_else(|| {
+                            format!(
+                                "plugin '{}' returned port '{}' for node '{}' but no outgoing edge matched it",
+                                plugin.plugin_id(),
+                                port,
+                                node.id
+                            )
+                        })?)
+                    }
+                    None => next_condition_edge(graph, current_id, "default")?
+                        .or(next_linear_edge(graph, current_id)?),
+                }
             }
             RuleGraphNodeType::WasmMatch => {
-                execute_wasm_runtime_node(
-                    graph,
-                    current_id,
-                    node.id.as_str(),
-                    node.wasm_match
-                        .as_ref()
-                        .ok_or_else(|| {
-                            format!("rule_graph node '{}' missing wasm_match config", node.id)
-                        })?,
-                    plugin_registry,
-                    runtime,
-                    method.as_str(),
-                    headers,
-                    selected_provider,
-                    selected_model,
-                    &mut resolved_path,
-                    &mut workflow_context,
-                    &mut outgoing_headers,
-                )?
+                let node_config = node.wasm_match.as_ref().ok_or_else(|| {
+                    format!("rule_graph node '{}' missing wasm_match config", node.id)
+                })?;
+                let mut matched_target = None;
+                for branch in &node_config.branches {
+                    let mut branch_plugin_config = node_config.plugin.clone();
+                    branch_plugin_config.config.insert(
+                        "expr".to_string(),
+                        toml::Value::String(branch.expr.clone()),
+                    );
+                    branch_plugin_config.config.insert(
+                        "branch_id".to_string(),
+                        toml::Value::String(branch.id.clone()),
+                    );
+                    let port = execute_wasm_runtime_node(
+                        node.id.as_str(),
+                        &branch_plugin_config,
+                        plugin_registry,
+                        runtime,
+                        method.as_str(),
+                        headers,
+                        selected_provider,
+                        selected_model,
+                        &mut resolved_path,
+                        &mut workflow_context,
+                        &mut outgoing_headers,
+                    )?;
+                    if matches!(port.as_deref(), Some("match")) {
+                        matched_target = Some(branch.target_node_id.as_str());
+                        break;
+                    }
+                }
+                matched_target.or(node_config.fallback_node_id.as_deref())
             }
             RuleGraphNodeType::Router => {
                 let node_config = node.router.as_ref().ok_or_else(|| {
@@ -1045,9 +973,7 @@ fn build_runtime_execute_input(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_wasm_runtime_node<'a>(
-    graph: &'a RuleGraphConfig,
-    current_id: &str,
+fn execute_wasm_runtime_node(
     node_id: &str,
     node_config: &WasmPluginNodeConfig,
     plugin_registry: &PluginRegistry,
@@ -1059,7 +985,7 @@ fn execute_wasm_runtime_node<'a>(
     resolved_path: &mut String,
     workflow_context: &mut HashMap<String, String>,
     outgoing_headers: &mut HashMap<String, Vec<String>>,
-) -> Result<Option<&'a str>, String> {
+) -> Result<Option<String>, String> {
     let plugin = plugin_registry
         .get(node_config.plugin_id.as_str())
         .ok_or_else(|| {
@@ -1097,33 +1023,7 @@ fn execute_wasm_runtime_node<'a>(
         resolved_path,
     );
 
-    match runtime_output.next_port.as_deref() {
-        Some(port) => {
-            if !plugin
-                .manifest()
-                .supported_output_ports
-                .iter()
-                .any(|item| item == port)
-            {
-                return Err(format!(
-                    "plugin '{}' returned unknown port '{}' for node '{}'",
-                    plugin.plugin_id(),
-                    port,
-                    node_id
-                ));
-            }
-            Ok(Some(next_condition_edge(graph, current_id, port)?.ok_or_else(|| {
-                format!(
-                    "plugin '{}' returned port '{}' for node '{}' but no outgoing edge matched it",
-                    plugin.plugin_id(),
-                    port,
-                    node_id
-                )
-            })?))
-        }
-        None => Ok(next_condition_edge(graph, current_id, "default")?
-            .or(next_linear_edge(graph, current_id)?)),
-    }
+    Ok(runtime_output.next_port)
 }
 
 fn apply_runtime_output(
@@ -1137,28 +1037,28 @@ fn apply_runtime_output(
     for log in &output.logs {
         match log.level {
             RuntimeLogLevel::Debug => info!(
-                node_id = %node_id,
                 plugin_id = %plugin.plugin_id(),
-                message = %log.message,
-                "wasm plugin debug"
+                node_id = %node_id,
+                wasm_log = %log.message,
+                "[wasm][debug]"
             ),
             RuntimeLogLevel::Info => info!(
-                node_id = %node_id,
                 plugin_id = %plugin.plugin_id(),
-                message = %log.message,
-                "wasm plugin log"
+                node_id = %node_id,
+                wasm_log = %log.message,
+                "[wasm][info]"
             ),
             RuntimeLogLevel::Warn => warn!(
-                node_id = %node_id,
                 plugin_id = %plugin.plugin_id(),
-                message = %log.message,
-                "wasm plugin warning"
+                node_id = %node_id,
+                wasm_log = %log.message,
+                "[wasm][warn]"
             ),
             RuntimeLogLevel::Error => error!(
-                node_id = %node_id,
                 plugin_id = %plugin.plugin_id(),
-                message = %log.message,
-                "wasm plugin error"
+                node_id = %node_id,
+                wasm_log = %log.message,
+                "[wasm][error]"
             ),
         }
     }
@@ -1814,7 +1714,8 @@ fn bad_gateway_error(error: impl std::fmt::Display) -> (StatusCode, String) {
 mod tests {
     use super::{
         PluginNodeRuntime, RequestResolution, RuntimeContextPatchOp, RuntimeExecuteInput,
-        RuntimeExecuteOutput, execute_rule_graph, plugin_workspace_root,
+        RuntimeExecuteOutput, RuntimeNodeConfig, RuntimePluginManifest,
+        WASMTIME_PLUGIN_RUNTIME, execute_rule_graph, plugin_workspace_root,
         resolve_plugin_network_policy, resolve_plugin_preopens, resolve_request,
         socket_addr_allowed,
     };
@@ -1830,7 +1731,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
-    use wasmtime_wasi::{DirPerms, FilePerms, SocketAddrUse};
+    use wasmtime_wasi::sockets::SocketAddrUse;
+    use wasmtime_wasi::{DirPerms, FilePerms};
 
     const TEST_COMPONENT_BYTES: &[u8] = &[
         0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00, 0x07, 0x10, 0x01, 0x41, 0x02, 0x01, 0x42,
@@ -2265,6 +2167,12 @@ position = { x = 120.0, y = 0.0 }
 [rule_graph.nodes.wasm_match]
 plugin_id = "intent-classifier"
 max_memory_bytes = 16777216
+fallback_node_id = "fallback-provider"
+
+[[rule_graph.nodes.wasm_match.branches]]
+id = "chat"
+expr = "method == POST"
+target_node_id = "chat-provider"
 
 [[rule_graph.nodes]]
 id = "chat-provider"
@@ -2318,7 +2226,7 @@ target = "end"
         .expect("config should parse");
         let registry = load_test_registry(&["chat", "default"], &[]);
         let runtime = FakePluginRuntime::succeeds(RuntimeExecuteOutput {
-            next_port: Some("chat".to_string()),
+            next_port: Some("match".to_string()),
             ..RuntimeExecuteOutput::default()
         });
 
@@ -2327,6 +2235,81 @@ target = "end"
 
         assert_eq!(resolution.provider.id, "kimi");
         assert_eq!(runtime.calls(), 1);
+    }
+
+    #[test]
+    #[ignore = "manual regression for real plugin ABI issues"]
+    fn executes_real_intent_classifier_plugin() {
+        execute_real_plugin_regression("intent-classifier", "/chat", vec![WasmCapability::Log]);
+    }
+
+    #[test]
+    #[ignore = "manual regression for real plugin ABI issues"]
+    fn executes_real_remote_policy_router_plugin() {
+        execute_real_plugin_regression(
+            "remote-policy-router",
+            "/v1/chat/completions",
+            vec![WasmCapability::Log],
+        );
+    }
+
+    #[test]
+    #[ignore = "manual regression for real plugin ABI issues"]
+    fn executes_real_minimal_smoke_plugin() {
+        execute_real_plugin_regression("minimal-smoke", "/smoke", Vec::new());
+    }
+
+    fn execute_real_plugin_regression(
+        plugin_id: &str,
+        _current_path: &str,
+        granted_capabilities: Vec<WasmCapability>,
+    ) {
+        let registry_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let registry = load_plugin_registry(&registry_root).expect("plugin registry should load");
+        let plugin = registry.get(plugin_id).expect("plugin should exist");
+        let node_config = WasmPluginNodeConfig {
+            plugin_id: plugin_id.to_string(),
+            timeout_ms: 5_000,
+            fuel: None,
+            max_memory_bytes: 128 * 1024 * 1024,
+            granted_capabilities,
+            read_dirs: Vec::new(),
+            write_dirs: Vec::new(),
+            allowed_hosts: Vec::new(),
+            config: toml::value::Table::new(),
+        };
+        let runtime_input = RuntimeExecuteInput {
+            request_method: String::new(),
+            current_path: String::new(),
+            request_headers: Vec::new(),
+            workflow_context: Vec::new(),
+            selected_provider_id: String::new(),
+            selected_model_id: String::new(),
+            node_config: RuntimeNodeConfig {
+                manifest: RuntimePluginManifest {
+                    id: String::new(),
+                    name: String::new(),
+                    version: String::new(),
+                    description: String::new(),
+                    supported_output_ports: Vec::new(),
+                    default_config_schema_hints_json: None,
+                    capabilities: Vec::new(),
+                },
+                grants: Vec::new(),
+                config_json: None,
+            },
+        };
+
+        WASMTIME_PLUGIN_RUNTIME
+            .execute(
+                plugin,
+                node_config.timeout_ms,
+                node_config.fuel,
+                node_config.max_memory_bytes,
+                &node_config,
+                &runtime_input,
+            )
+            .expect("real plugin execution should succeed");
     }
 
     #[test]

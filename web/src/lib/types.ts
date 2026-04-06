@@ -68,6 +68,7 @@ export type WasmPluginManifestSummary = {
 export type RuleGraphNodeType =
   | "start"
   | "condition"
+  | "route_provider"
   | "select_model"
   | "rewrite_path"
   | "set_context"
@@ -162,6 +163,12 @@ export type RuleGraphNode = {
     write_dirs: string[];
     allowed_hosts: string[];
     config: Record<string, unknown>;
+    branches: Array<{
+      id: string;
+      expr: string;
+      target_node_id: string;
+    }>;
+    fallback_node_id?: string | null;
   } | null;
   note_node?: {
     text: string;

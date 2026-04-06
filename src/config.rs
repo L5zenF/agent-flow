@@ -200,7 +200,7 @@ pub struct RuleGraphNode {
     #[serde(default)]
     pub wasm_plugin: Option<WasmPluginNodeConfig>,
     #[serde(default)]
-    pub wasm_match: Option<WasmPluginNodeConfig>,
+    pub wasm_match: Option<WasmMatchNodeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -362,6 +362,23 @@ pub struct WasmPluginNodeConfig {
     pub allowed_hosts: Vec<String>,
     #[serde(default)]
     pub config: toml::value::Table,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WasmMatchNodeConfig {
+    #[serde(flatten)]
+    pub plugin: WasmPluginNodeConfig,
+    #[serde(default)]
+    pub branches: Vec<WasmMatchBranchConfig>,
+    #[serde(default)]
+    pub fallback_node_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WasmMatchBranchConfig {
+    pub id: String,
+    pub expr: String,
+    pub target_node_id: String,
 }
 
 pub fn load_config(path: &Path) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
@@ -1083,7 +1100,7 @@ fn validate_rule_graph_node(
             validate_wasm_plugin_node(node.id.as_str(), node.wasm_plugin.as_ref())?
         }
         RuleGraphNodeType::WasmMatch => {
-            validate_wasm_plugin_node(node.id.as_str(), node.wasm_match.as_ref())?
+            validate_wasm_match_node(node.id.as_str(), graph, node.wasm_match.as_ref())?
         }
     }
 
@@ -1319,6 +1336,69 @@ fn validate_wasm_plugin_node(
     }
 
     validate_wasm_plugin_hosts(node_id, &config.allowed_hosts)?;
+
+    Ok(())
+}
+
+fn validate_wasm_match_node(
+    node_id: &str,
+    graph: &RuleGraphConfig,
+    config: Option<&WasmMatchNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing wasm_match config").into());
+    };
+    validate_wasm_plugin_node(node_id, Some(&config.plugin))?;
+    if config.branches.is_empty() {
+        return Err(format!("rule_graph node '{node_id}' must define at least one wasm_match branch").into());
+    }
+
+    let node_ids = graph
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut branch_ids = HashSet::new();
+    for branch in &config.branches {
+        if branch.id.trim().is_empty() {
+            return Err(format!(
+                "rule_graph node '{node_id}' contains a wasm_match branch with empty id"
+            )
+            .into());
+        }
+        if !branch_ids.insert(branch.id.as_str()) {
+            return Err(format!(
+                "rule_graph node '{node_id}' has duplicate wasm_match branch id '{}'",
+                branch.id
+            )
+            .into());
+        }
+        if branch.expr.trim().is_empty() {
+            return Err(format!(
+                "rule_graph node '{node_id}' wasm_match branch '{}' has empty expr",
+                branch.id
+            )
+            .into());
+        }
+        if branch.target_node_id.trim().is_empty()
+            || !node_ids.contains(branch.target_node_id.as_str())
+        {
+            return Err(format!(
+                "rule_graph node '{node_id}' wasm_match branch '{}' references missing target '{}'",
+                branch.id, branch.target_node_id
+            )
+            .into());
+        }
+    }
+
+    if let Some(fallback) = config.fallback_node_id.as_deref() {
+        if fallback.trim().is_empty() || !node_ids.contains(fallback) {
+            return Err(format!(
+                "rule_graph node '{node_id}' references missing fallback target '{fallback}'"
+            )
+            .into());
+        }
+    }
 
     Ok(())
 }
@@ -1653,6 +1733,12 @@ plugin_id = "remote-policy-router"
 fuel = 500000
 max_memory_bytes = 16777216
 granted_capabilities = ["log"]
+fallback_node_id = "end"
+
+[[rule_graph.nodes.wasm_match.branches]]
+id = "chat"
+expr = "ctx.header.x-tenant == enterprise"
+target_node_id = "end"
 
 [rule_graph.nodes.wasm_match.config]
 match_header = "x-tenant"
@@ -2440,13 +2526,22 @@ target = "end"
             .wasm_match
             .as_ref()
             .expect("wasm match config should exist");
-        assert_eq!(plugin.plugin_id, "remote-policy-router");
-        assert_eq!(plugin.timeout_ms, 20);
-        assert_eq!(plugin.fuel, Some(500000));
-        assert_eq!(plugin.max_memory_bytes, 16_777_216);
-        assert_eq!(plugin.granted_capabilities, vec![WasmCapability::Log]);
+        assert_eq!(plugin.plugin.plugin_id, "remote-policy-router");
+        assert_eq!(plugin.plugin.timeout_ms, 20);
+        assert_eq!(plugin.plugin.fuel, Some(500000));
+        assert_eq!(plugin.plugin.max_memory_bytes, 16_777_216);
+        assert_eq!(plugin.plugin.granted_capabilities, vec![WasmCapability::Log]);
+        assert_eq!(plugin.branches.len(), 1);
+        assert_eq!(plugin.branches[0].id, "chat");
+        assert_eq!(plugin.branches[0].expr, "ctx.header.x-tenant == enterprise");
+        assert_eq!(plugin.branches[0].target_node_id, "end");
+        assert_eq!(plugin.fallback_node_id.as_deref(), Some("end"));
         assert_eq!(
-            plugin.config.get("match_header").and_then(|value| value.as_str()),
+            plugin
+                .plugin
+                .config
+                .get("match_header")
+                .and_then(|value| value.as_str()),
             Some("x-tenant")
         );
     }
