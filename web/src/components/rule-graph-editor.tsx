@@ -1,6 +1,7 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRightLeft,
+  CircleHelp,
   CopyPlus,
   GitBranch,
   Grip,
@@ -82,6 +83,7 @@ type RuleCanvasNodeData = {
   modelOptions: SelectOption[];
   templateSuggestions: string[];
   onUpdateNode: (nextNode: RuleGraphNode) => void;
+  onOpenWasmConfig: () => void;
   onDeleteNode: () => void;
 };
 
@@ -148,6 +150,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   const graphRef = useRef(graph);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph.start_node_id);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [wasmConfigNodeId, setWasmConfigNodeId] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const validation = useMemo(() => validateGraph(graph, config, pluginManifests), [graph, config, pluginManifests]);
   const providerOptions = useMemo(
@@ -215,6 +218,17 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           ),
         ].join("\n")
       : "Graph validation passed.";
+  const modalWasmNode = useMemo(
+    () => graph.nodes.find((node) => node.id === wasmConfigNodeId && node.type === "wasm_plugin") ?? null,
+    [graph.nodes, wasmConfigNodeId],
+  );
+  const modalWasmManifest = useMemo(
+    () =>
+      modalWasmNode?.type === "wasm_plugin" && modalWasmNode.wasm_plugin?.plugin_id
+        ? (pluginManifestMap.get(modalWasmNode.wasm_plugin.plugin_id) ?? null)
+        : null,
+    [modalWasmNode, pluginManifestMap],
+  );
 
   const flowNodes = useMemo<Array<Node<RuleCanvasNodeData>>>(
     () =>
@@ -237,6 +251,10 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           templateSuggestions,
           onUpdateNode: (nextNode) => {
             updateGraph(setConfig, replaceNode(graph, node.id, nextNode));
+          },
+          onOpenWasmConfig: () => {
+            setSelectedNodeId(node.id);
+            setWasmConfigNodeId(node.id);
           },
           onDeleteNode: () => {
             const nextGraph = removeNodeFromGraph(graph, node.id);
@@ -459,61 +477,62 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   };
 
   return (
-    <div className="min-w-0">
-      <div className="rule-graph-canvas h-[calc(100dvh-8.75rem)] min-h-[560px] rounded-[24px] bg-[radial-gradient(circle_at_top,#fff_0%,#f7f7f5_46%,#eef2f7_100%)]">
-        <ReactFlow
-          nodes={canvasNodes}
-          edges={flowEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          onInit={setFlowInstance}
-          fitView
-          minZoom={0.3}
-          maxZoom={1.4}
-          connectionMode={ConnectionMode.Loose}
-          onDragOver={(event) => {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            const serializedItem = event.dataTransfer.getData("application/rule-node-template");
-            if (!serializedItem || !flowInstance) return;
-            const item = parseNodeLibraryItem(serializedItem);
-            if (!item) return;
-            addNode(item, flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
-          }}
-          onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-          onEdgeClick={(_, edge) => {
-            setSelectedNodeId(null);
-            setSelectedEdgeId(edge.id);
-          }}
-          onPaneClick={() => {
-            setSelectedNodeId(null);
-            setSelectedEdgeId(null);
-          }}
-          onNodesChange={onNodesChange}
-          onNodeDragStop={(_, node) => {
-            canvasNodesRef.current = canvasNodesRef.current.map((item) =>
-              item.id === node.id ? { ...item, position: node.position } : item,
-            );
-            updateGraph(setConfig, {
-              ...graph,
-              nodes: graph.nodes.map((item) =>
-                item.id === node.id
-                  ? {
-                      ...item,
-                      position: node.position,
-                    }
-                  : item,
-              ),
-            });
-          }}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          defaultEdgeOptions={{ markerEnd: { type: MarkerType.ArrowClosed } }}
-          proOptions={{ hideAttribution: true }}
-        >
+    <>
+      <div className="min-w-0">
+        <div className="rule-graph-canvas h-[calc(100dvh-8.75rem)] min-h-[560px] rounded-[24px] bg-[radial-gradient(circle_at_top,#fff_0%,#f7f7f5_46%,#eef2f7_100%)]">
+          <ReactFlow
+            nodes={canvasNodes}
+            edges={flowEdges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onInit={setFlowInstance}
+            fitView
+            minZoom={0.3}
+            maxZoom={1.4}
+            connectionMode={ConnectionMode.Loose}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const serializedItem = event.dataTransfer.getData("application/rule-node-template");
+              if (!serializedItem || !flowInstance) return;
+              const item = parseNodeLibraryItem(serializedItem);
+              if (!item) return;
+              addNode(item, flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+            }}
+            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+            onEdgeClick={(_, edge) => {
+              setSelectedNodeId(null);
+              setSelectedEdgeId(edge.id);
+            }}
+            onPaneClick={() => {
+              setSelectedNodeId(null);
+              setSelectedEdgeId(null);
+            }}
+            onNodesChange={onNodesChange}
+            onNodeDragStop={(_, node) => {
+              canvasNodesRef.current = canvasNodesRef.current.map((item) =>
+                item.id === node.id ? { ...item, position: node.position } : item,
+              );
+              updateGraph(setConfig, {
+                ...graph,
+                nodes: graph.nodes.map((item) =>
+                  item.id === node.id
+                    ? {
+                        ...item,
+                        position: node.position,
+                      }
+                    : item,
+                ),
+              });
+            }}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            defaultEdgeOptions={{ markerEnd: { type: MarkerType.ArrowClosed } }}
+            proOptions={{ hideAttribution: true }}
+          >
           <MiniMap
             pannable
             zoomable
@@ -593,9 +612,22 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
               Drag from the node dock or click an icon to insert a step.
             </div>
           </Panel>
-        </ReactFlow>
+          </ReactFlow>
+        </div>
       </div>
-    </div>
+      <WasmConfigModal
+          node={modalWasmNode}
+          pluginManifest={modalWasmManifest}
+          pluginManifestOptions={pluginManifestOptions}
+          onClose={() => setWasmConfigNodeId(null)}
+          onUpdateNode={(nextNode) => {
+            if (!modalWasmNode || modalWasmNode.type !== "wasm_plugin") {
+              return;
+            }
+            updateGraph(setConfig, replaceNode(graph, modalWasmNode.id, nextNode));
+          }}
+        />
+    </>
   );
 }
 
@@ -718,6 +750,8 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
               id={port}
               type="source"
               position={Position.Right}
+              title={port === "default" ? "Default output" : `Output: ${port}`}
+              aria-label={port === "default" ? "Default output" : `Output ${port}`}
               style={{
                 top: `${((index + 1) / (pluginOutputPorts.length + 1)) * 100}%`,
                 backgroundColor: port === "default" ? "#0f766e" : "#0ea5e9",
@@ -772,7 +806,80 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className={tone.icon}>{icon}</div>
+            {data.nodeType === "wasm_plugin" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    data.onOpenWasmConfig();
+                  }}
+                  className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+                  aria-label="Configure plugin permissions"
+                  title="Configure permissions"
+                >
+                  <Puzzle className="h-4 w-4" />
+                </button>
+                <div className="group relative">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={(event) => event.preventDefault()}
+                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700"
+                    aria-label="Show plugin details"
+                    title="Plugin details"
+                  >
+                    <CircleHelp className="h-4 w-4" />
+                  </button>
+                  <div className="pointer-events-none absolute right-0 top-[calc(100%+10px)] z-30 hidden w-64 rounded-2xl border border-zinc-200 bg-white p-3 text-left shadow-[0_18px_50px_rgba(15,23,42,0.14)] group-hover:block">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
+                      Plugin Details
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-zinc-950">
+                      {data.pluginManifest?.name ?? draft.wasm_plugin?.plugin_id ?? "Unknown plugin"}
+                    </div>
+                    <p className="mt-2 text-[12px] leading-5 text-zinc-600">
+                      {data.pluginManifest?.description || "Custom wasm plugin without a registry description."}
+                    </p>
+                    <div className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
+                      Outputs
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {pluginOutputPorts.map((port) => (
+                        <span
+                          key={port}
+                          className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-700"
+                        >
+                          {port}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
+                      Uses
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {draft.wasm_plugin?.granted_capabilities.length ? (
+                        draft.wasm_plugin.granted_capabilities.map((capability) => (
+                          <span
+                            key={capability}
+                            className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-700"
+                          >
+                            {capability}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[11px] text-zinc-500">No extra access</span>
+                      )}
+                    </div>
+                    <div className="mt-3 text-[11px] leading-5 text-zinc-500">
+                      Hover output handles for port names. Use the plugin icon to jump to permissions.
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className={tone.icon}>{icon}</div>
+            )}
             {selected && draft.type !== "start" ? (
               <button
                 type="button"
@@ -1172,249 +1279,17 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
           {draft.type === "wasm_plugin" ? (
             <div className="space-y-2">
-              {!data.pluginManifest ? (
-                <InlineSelect
-                  value={draft.wasm_plugin?.plugin_id ?? ""}
-                  options={data.pluginManifestOptions}
-                  onChange={(value) => {
-                    commitNode({
-                      ...draft,
-                      wasm_plugin: {
-                        plugin_id: value,
-                        timeout_ms: draft.wasm_plugin?.timeout_ms ?? 20,
-                        fuel: draft.wasm_plugin?.fuel ?? null,
-                        max_memory_bytes: draft.wasm_plugin?.max_memory_bytes ?? 16_777_216,
-                        granted_capabilities: draft.wasm_plugin?.granted_capabilities ?? [],
-                        read_dirs: draft.wasm_plugin?.read_dirs ?? [],
-                        write_dirs: draft.wasm_plugin?.write_dirs ?? [],
-                        allowed_hosts: draft.wasm_plugin?.allowed_hosts ?? [],
-                        config: draft.wasm_plugin?.config ?? {},
-                      },
-                    });
-                  }}
-                  placeholder="Resolve plugin"
-                />
-              ) : null}
-              <div className="rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-[11px] text-sky-950">
-                <div className="font-medium">
-                  {data.pluginManifest?.name ?? draft.wasm_plugin?.plugin_id ?? "Unknown plugin"}
-                  {data.pluginManifest ? ` · ${data.pluginManifest.version}` : ""}
-                </div>
-                <div className="mt-1 text-sky-800">
-                  Plugin ID: <span className="font-mono">{draft.wasm_plugin?.plugin_id ?? "-"}</span>
-                </div>
-                <div className="mt-1 text-sky-800">
-                  {data.pluginManifest?.description ?? "This plugin is not currently loaded in the registry."}
-                </div>
-                <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-sky-700">
-                  Ports: {["default", ...(data.pluginManifest?.supported_output_ports ?? [])].join(", ")}
+              <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
+                <div className="min-w-0">
+                  <p className="line-clamp-4 text-[12px] leading-5 text-zinc-600">
+                    {describeWasmPlugin(data.pluginManifest, draft)}
+                  </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <InlineInput
-                  value={String(draft.wasm_plugin?.timeout_ms ?? 20)}
-                  placeholder="20"
-                  onChange={(value) =>
-                    setDraft((current) => ({
-                      ...current,
-                      wasm_plugin: {
-                        ...current.wasm_plugin!,
-                        timeout_ms: value === "" ? 0 : Number(value),
-                      },
-                    }))
-                  }
-                  onCommit={(value) =>
-                    commitNode({
-                      ...draft,
-                      wasm_plugin: {
-                        ...draft.wasm_plugin!,
-                        timeout_ms: value === "" ? 0 : Number(value),
-                      },
-                    })
-                  }
-                />
-                <InlineInput
-                  value={draft.wasm_plugin?.fuel != null ? String(draft.wasm_plugin.fuel) : ""}
-                  placeholder="optional fuel"
-                  onChange={(value) =>
-                    setDraft((current) => ({
-                      ...current,
-                      wasm_plugin: {
-                        ...current.wasm_plugin!,
-                        fuel: value === "" ? null : Number(value),
-                      },
-                    }))
-                  }
-                  onCommit={(value) =>
-                    commitNode({
-                      ...draft,
-                      wasm_plugin: {
-                        ...draft.wasm_plugin!,
-                        fuel: value === "" ? null : Number(value),
-                      },
-                    })
-                  }
-                />
+              <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-5 text-zinc-500">
+                Configure permissions, runtime limits, and plugin config in the right inspector.
               </div>
-
-              <InlineInput
-                value={String(draft.wasm_plugin?.max_memory_bytes ?? 16_777_216)}
-                placeholder="16777216"
-                onChange={(value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    wasm_plugin: {
-                      ...current.wasm_plugin!,
-                      max_memory_bytes: value === "" ? 0 : Number(value),
-                    },
-                  }))
-                }
-                onCommit={(value) =>
-                  commitNode({
-                    ...draft,
-                    wasm_plugin: {
-                      ...draft.wasm_plugin!,
-                      max_memory_bytes: value === "" ? 0 : Number(value),
-                    },
-                  })
-                }
-              />
-
-              <div className="rounded-2xl border border-zinc-200/80 bg-white/70 p-3">
-                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                  Capabilities
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {WASM_CAPABILITY_OPTIONS.map((option) => {
-                    const enabled = draft.wasm_plugin?.granted_capabilities.includes(option.value) ?? false;
-                    const declared =
-                      data.pluginManifest?.capabilities.includes(option.value) ?? true;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          const current = draft.wasm_plugin?.granted_capabilities ?? [];
-                          const next = enabled
-                            ? current.filter((item) => item !== option.value)
-                            : [...current, option.value];
-                          commitNode({
-                            ...draft,
-                            wasm_plugin: {
-                              ...draft.wasm_plugin!,
-                              granted_capabilities: next,
-                            },
-                          });
-                        }}
-                        className={[
-                          "nodrag nopan rounded-full border px-3 py-1 text-xs transition",
-                          enabled
-                            ? "border-zinc-900 bg-zinc-900 text-white"
-                            : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400",
-                          declared ? "" : "opacity-55",
-                        ].join(" ")}
-                        title={declared ? option.label : "Not declared by selected plugin manifest"}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <InlineTextarea
-                value={formatListForTextarea(draft.wasm_plugin?.read_dirs ?? [])}
-                placeholder={"plugins-data/common\ndata/rules"}
-                onChange={(value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    wasm_plugin: {
-                      ...current.wasm_plugin!,
-                      read_dirs: parseTextareaList(value),
-                    },
-                  }))
-                }
-                onCommit={(value) =>
-                  commitNode({
-                    ...draft,
-                    wasm_plugin: {
-                      ...draft.wasm_plugin!,
-                      read_dirs: parseTextareaList(value),
-                    },
-                  })
-                }
-              />
-
-              <InlineTextarea
-                value={formatListForTextarea(draft.wasm_plugin?.write_dirs ?? [])}
-                placeholder={"plugins-data/runtime"}
-                onChange={(value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    wasm_plugin: {
-                      ...current.wasm_plugin!,
-                      write_dirs: parseTextareaList(value),
-                    },
-                  }))
-                }
-                onCommit={(value) =>
-                  commitNode({
-                    ...draft,
-                    wasm_plugin: {
-                      ...draft.wasm_plugin!,
-                      write_dirs: parseTextareaList(value),
-                    },
-                  })
-                }
-              />
-
-              <InlineTextarea
-                value={formatListForTextarea(draft.wasm_plugin?.allowed_hosts ?? [])}
-                placeholder={"api.example.com:443\n127.0.0.1:8080"}
-                onChange={(value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    wasm_plugin: {
-                      ...current.wasm_plugin!,
-                      allowed_hosts: parseTextareaList(value),
-                    },
-                  }))
-                }
-                onCommit={(value) =>
-                  commitNode({
-                    ...draft,
-                    wasm_plugin: {
-                      ...draft.wasm_plugin!,
-                      allowed_hosts: parseTextareaList(value),
-                    },
-                  })
-                }
-              />
-
-              <InlineTextarea
-                value={formatPluginConfig(draft.wasm_plugin?.config ?? {})}
-                placeholder={'{\n  "prompt": "classify request intent"\n}'}
-                onChange={(value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    wasm_plugin: {
-                      ...current.wasm_plugin!,
-                      config: parsePluginConfig(value, current.wasm_plugin?.config ?? {}),
-                    },
-                  }))
-                }
-                onCommit={(value) =>
-                  commitNode({
-                    ...draft,
-                    wasm_plugin: {
-                      ...draft.wasm_plugin!,
-                      config: parsePluginConfig(value, draft.wasm_plugin?.config ?? {}),
-                    },
-                  })
-                }
-              />
             </div>
           ) : null}
 
@@ -1579,6 +1454,353 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
     </>
   );
 });
+
+function WasmConfigModal({
+  node,
+  pluginManifest,
+  pluginManifestOptions,
+  onClose,
+  onUpdateNode,
+}: {
+  node: RuleGraphNode | null;
+  pluginManifest: WasmPluginManifestSummary | null;
+  pluginManifestOptions: SelectOption[];
+  onClose: () => void;
+  onUpdateNode: (nextNode: RuleGraphNode) => void;
+}) {
+  if (!node || node.type !== "wasm_plugin") return null;
+
+  const plugin = node.wasm_plugin!;
+  const outputPorts = pluginManifest?.supported_output_ports?.length
+    ? Array.from(new Set(["default", ...pluginManifest.supported_output_ports]))
+    : ["default"];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 px-4 py-6 backdrop-blur-[2px]">
+      <div
+        className="absolute inset-0"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-100 px-6 py-5">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">Wasm Node Config</div>
+            <div className="mt-2 text-xl font-semibold text-zinc-950">{pluginManifest?.name ?? plugin.plugin_id}</div>
+            <div className="mt-1 text-sm leading-6 text-zinc-600">
+              {describeWasmPlugin(pluginManifest, node)}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-zinc-500">
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1">
+                {pluginManifest?.version ?? "unversioned"}
+              </span>
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-mono">
+                {plugin.plugin_id}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+            aria-label="Close modal"
+          >
+            <Minus className="h-4 w-4 rotate-45" />
+          </button>
+        </div>
+        <div className="overflow-y-auto px-6 py-5">
+      {!pluginManifest ? (
+        <InspectorSection title="Plugin" subtitle="Resolve the missing registry entry before editing other fields.">
+          <InlineSelect
+            value={plugin.plugin_id}
+            options={pluginManifestOptions}
+            onChange={(value) =>
+              onUpdateNode({
+                ...node,
+                wasm_plugin: {
+                  ...plugin,
+                  plugin_id: value,
+                },
+              })
+            }
+            placeholder="Resolve plugin"
+          />
+        </InspectorSection>
+      ) : null}
+
+      <InspectorSection title="Outputs" subtitle="These are the ports this plugin can emit from the right edge.">
+        <div className="flex flex-wrap gap-2">
+          {outputPorts.map((port) => (
+            <div
+              key={port}
+              className={[
+                "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
+                port === "default"
+                  ? "border-teal-300 bg-teal-50 text-teal-800"
+                  : "border-sky-200 bg-sky-50 text-sky-700",
+              ].join(" ")}
+            >
+              {port}
+            </div>
+          ))}
+        </div>
+      </InspectorSection>
+
+      <InspectorSection title="Permissions" subtitle="Grant only the capabilities and scope the plugin actually needs.">
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {WASM_CAPABILITY_OPTIONS.map((option) => {
+              const enabled = plugin.granted_capabilities.includes(option.value);
+              const declared = pluginManifest?.capabilities.includes(option.value) ?? true;
+              const nextCapabilities = enabled
+                ? plugin.granted_capabilities.filter((item) => item !== option.value)
+                : [...plugin.granted_capabilities, option.value];
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() =>
+                    onUpdateNode({
+                      ...node,
+                      wasm_plugin: {
+                        ...plugin,
+                        granted_capabilities: nextCapabilities,
+                      },
+                    })
+                  }
+                  className={[
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                    enabled
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400",
+                    declared ? "" : "opacity-50",
+                  ].join(" ")}
+                  title={declared ? option.label : "Not declared by selected plugin manifest"}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {plugin.granted_capabilities.includes("fs") ? (
+            <div className="grid grid-cols-1 gap-2">
+              <FieldLabel label="Readable Directories" />
+              <InlineTextarea
+                value={formatListForTextarea(plugin.read_dirs ?? [])}
+                placeholder={"plugins-data/common\ndata/rules"}
+                onChange={(value) =>
+                  onUpdateNode({
+                    ...node,
+                    wasm_plugin: {
+                      ...plugin,
+                      read_dirs: parseTextareaList(value),
+                    },
+                  })
+                }
+                onCommit={(value) =>
+                  onUpdateNode({
+                    ...node,
+                    wasm_plugin: {
+                      ...plugin,
+                      read_dirs: parseTextareaList(value),
+                    },
+                  })
+                }
+              />
+              <FieldLabel label="Writable Directories" />
+              <InlineTextarea
+                value={formatListForTextarea(plugin.write_dirs ?? [])}
+                placeholder={"plugins-data/runtime"}
+                onChange={(value) =>
+                  onUpdateNode({
+                    ...node,
+                    wasm_plugin: {
+                      ...plugin,
+                      write_dirs: parseTextareaList(value),
+                    },
+                  })
+                }
+                onCommit={(value) =>
+                  onUpdateNode({
+                    ...node,
+                    wasm_plugin: {
+                      ...plugin,
+                      write_dirs: parseTextareaList(value),
+                    },
+                  })
+                }
+              />
+            </div>
+          ) : null}
+
+          {plugin.granted_capabilities.includes("network") ? (
+            <div className="grid grid-cols-1 gap-2">
+              <FieldLabel label="Allowed Hosts" />
+              <InlineTextarea
+                value={formatListForTextarea(plugin.allowed_hosts ?? [])}
+                placeholder={"api.example.com:443\n127.0.0.1:8080"}
+                onChange={(value) =>
+                  onUpdateNode({
+                    ...node,
+                    wasm_plugin: {
+                      ...plugin,
+                      allowed_hosts: parseTextareaList(value),
+                    },
+                  })
+                }
+                onCommit={(value) =>
+                  onUpdateNode({
+                    ...node,
+                    wasm_plugin: {
+                      ...plugin,
+                      allowed_hosts: parseTextareaList(value),
+                    },
+                  })
+                }
+              />
+            </div>
+          ) : null}
+        </div>
+      </InspectorSection>
+
+      <InspectorSection title="Runtime Limits" subtitle="Guardrails for latency, compute budget, and memory.">
+        <div className="grid grid-cols-1 gap-2">
+          <FieldLabel label="Timeout (ms)" />
+          <InlineInput
+            value={String(plugin.timeout_ms ?? 20)}
+            placeholder="20"
+            onChange={(value) =>
+              onUpdateNode({
+                ...node,
+                wasm_plugin: {
+                  ...plugin,
+                  timeout_ms: value === "" ? 0 : Number(value),
+                },
+              })
+            }
+            onCommit={(value) =>
+              onUpdateNode({
+                ...node,
+                wasm_plugin: {
+                  ...plugin,
+                  timeout_ms: value === "" ? 0 : Number(value),
+                },
+              })
+            }
+          />
+          <FieldLabel label="Fuel" />
+          <InlineInput
+            value={plugin.fuel != null ? String(plugin.fuel) : ""}
+            placeholder="optional fuel"
+            onChange={(value) =>
+              onUpdateNode({
+                ...node,
+                wasm_plugin: {
+                  ...plugin,
+                  fuel: value === "" ? null : Number(value),
+                },
+              })
+            }
+            onCommit={(value) =>
+              onUpdateNode({
+                ...node,
+                wasm_plugin: {
+                  ...plugin,
+                  fuel: value === "" ? null : Number(value),
+                },
+              })
+            }
+          />
+          <FieldLabel label="Max Memory Bytes" />
+          <InlineInput
+            value={String(plugin.max_memory_bytes ?? 16_777_216)}
+            placeholder="16777216"
+            onChange={(value) =>
+              onUpdateNode({
+                ...node,
+                wasm_plugin: {
+                  ...plugin,
+                  max_memory_bytes: value === "" ? 0 : Number(value),
+                },
+              })
+            }
+            onCommit={(value) =>
+              onUpdateNode({
+                ...node,
+                wasm_plugin: {
+                  ...plugin,
+                  max_memory_bytes: value === "" ? 0 : Number(value),
+                },
+              })
+            }
+          />
+        </div>
+      </InspectorSection>
+
+      <InspectorSection title="Plugin Config" subtitle="Raw JSON passed through to the wasm plugin.">
+        <InlineTextarea
+          value={formatPluginConfig(plugin.config ?? {})}
+          placeholder={'{\n  "prompt": "classify request intent"\n}'}
+          onChange={(value) =>
+            onUpdateNode({
+              ...node,
+              wasm_plugin: {
+                ...plugin,
+                config: parsePluginConfig(value, plugin.config ?? {}),
+              },
+            })
+          }
+          onCommit={(value) =>
+            onUpdateNode({
+              ...node,
+              wasm_plugin: {
+                ...plugin,
+                config: parsePluginConfig(value, plugin.config ?? {}),
+              },
+            })
+          }
+        />
+      </InspectorSection>
+        </div>
+        <div className="flex items-center justify-end gap-3 border-t border-zinc-100 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 items-center justify-center rounded-full border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:text-zinc-950"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InspectorSection({
+  id,
+  title,
+  subtitle,
+  children,
+}: {
+  id?: string;
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+}) {
+  return (
+    <section id={id} className="border-t border-zinc-100 py-4 first:border-t-0 first:pt-0">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">{title}</div>
+      <p className="mt-1 text-sm leading-6 text-zinc-600">{subtitle}</p>
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
+function FieldLabel({ label }: { label: string }) {
+  return <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">{label}</div>;
+}
 
 const RuleCanvasEdge = memo(function RuleCanvasEdge({
   id,
@@ -2203,6 +2425,23 @@ function labelForNode(node: RuleGraphNode, pluginManifest?: WasmPluginManifestSu
     return pluginManifest?.name ?? node.wasm_plugin?.plugin_id ?? "Wasm Plugin";
   }
   return labelForType(node.type);
+}
+
+function describeWasmPlugin(
+  pluginManifest: WasmPluginManifestSummary | null | undefined,
+  node: RuleGraphNode,
+) {
+  const description = pluginManifest?.description?.trim();
+  if (description) {
+    return description;
+  }
+
+  const pluginId = node.wasm_plugin?.plugin_id?.trim();
+  if (!pluginId) {
+    return "Runs a wasm plugin step inside the request flow.";
+  }
+
+  return `Runs the ${pluginId} wasm plugin as a workflow step.`;
 }
 
 function shortLabelForType(type: RuleGraphNodeType) {

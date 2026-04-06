@@ -1,12 +1,12 @@
 id = "remote-policy-router"
-name = "Remote Policy Router"
+name = "远程策略路由器"
 version = "0.1.0"
-description = "Routes requests with local fallback policy and optional remote policy overrides."
+description = "结合本地兜底策略与可选的远程策略覆盖，对请求进行路由分发。"
 supported_output_ports = ["chat", "embedding", "moderation", "default", "error"]
 capabilities = ["log", "fs", "network"]
 
 [default_config_schema_hints]
-policy_file = "Guest path to a local JSON policy file inside a granted read directory, for example /plugins/remote-policy-router/examples/local-policy.json."
-policy_url = "Optional http://host:port/path endpoint returning a JSON policy document."
-match_header = "Header used as the primary routing key, for example x-tenant."
-fallback_port = "Port to use when no rule matches or policy loading fails."
+policy_file = "已授权可读目录中的本地 JSON 策略文件 guest 路径，例如 /plugins/remote-policy-router/examples/local-policy.json。"
+policy_url = "可选的 http://host:port/path 远程地址，用于返回 JSON 策略文档。"
+match_header = "作为主路由键使用的请求头，例如 x-tenant。"
+fallback_port = "当没有规则命中或策略加载失败时使用的输出端口。"
