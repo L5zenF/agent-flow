@@ -154,21 +154,60 @@ cargo run -- --config config/gateway.toml
 http://127.0.0.1:9002/admin/ui
 ```
 
-图编辑入口：
+Workflow 入口：
 
-- 打开面板后切到 `Rule Graph`
-- 左侧添加节点
-- 中间拖拽与连线
-- 右侧编辑当前节点属性
-- 保存后写回 `config/gateway.toml`
+- 打开面板后先进入 `Workflow Gallery`
+- 选中一个 workflow 后进入画布编辑
+- `Set Active` 会切换当前运行中的 workflow
+- `Save` 会同时保存当前 workflow 文件和全局 `gateway.toml`
 
 ## 管理 API
 
 - `GET /admin/config`
+- `GET /admin/workflows`
+- `GET /admin/workflows/:id`
 - `GET /admin/plugins`
+- `POST /admin/workflows`
+- `POST /admin/workflows/:id/activate`
+- `PUT /admin/workflows/:id`
 - `PUT /admin/config`
 - `POST /admin/validate`
 - `POST /admin/reload`
+
+## Workflow 目录
+
+当前结构已经拆成“主配置 + workflow 文件”：
+
+```text
+config/
+  gateway.toml
+workflows/
+  default.toml
+  chat-routing.toml
+plugins/
+  ...
+```
+
+其中：
+
+- `config/gateway.toml` 保存全局监听地址、providers、models、workflow 索引和 `active_workflow_id`
+- `workflows/*.toml` 每个文件只保存一张图
+- 运行时只执行当前 `active_workflow_id` 对应的 workflow
+
+最小主配置示例：
+
+```toml
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+workflows_dir = "workflows"
+active_workflow_id = "default"
+
+[[workflows]]
+id = "default"
+name = "Default Workflow"
+file = "default.toml"
+description = "Starter workflow"
+```
 
 ## WASM 插件
 
