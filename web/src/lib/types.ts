@@ -55,6 +55,8 @@ export type GraphPosition = {
 
 export type WasmCapability = "log" | "fs" | "network";
 
+export type CodeRunnerLanguage = "javascript";
+
 export type WasmPluginManifestSummary = {
   id: string;
   name: string;
@@ -80,6 +82,7 @@ export type RuleGraphNodeType =
   | "set_header_if_absent"
   | "wasm_plugin"
   | "wasm_match"
+  | "code_runner"
   | "note"
   | "end";
 
@@ -169,6 +172,12 @@ export type RuleGraphNode = {
       target_node_id: string;
     }>;
     fallback_node_id?: string | null;
+  } | null;
+  code_runner?: {
+    language: CodeRunnerLanguage;
+    timeout_ms: number;
+    max_memory_bytes: number;
+    code: string;
   } | null;
   note_node?: {
     text: string;

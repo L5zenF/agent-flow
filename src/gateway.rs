@@ -12,15 +12,15 @@ use axum::http::header::{CONNECTION, HOST};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
 use reqwest::Client;
+use rquickjs::{Context as JsContext, Runtime as JsRuntime};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use url::Url;
 use wasmtime::component::{Linker, ResourceTable};
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::sockets::SocketAddrUse;
-use wasmtime_wasi::{
-    DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
-};
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use self::exports::proxy_tools::proxy_node_plugin::node_plugin::{
     CapabilityDeclaration, CapabilityGrant, CapabilityKind, ContextEntry, ContextPatchOp,
@@ -28,9 +28,9 @@ use self::exports::proxy_tools::proxy_node_plugin::node_plugin::{
     PluginManifest, RequestHeader,
 };
 use crate::config::{
-    ConditionMode, GatewayConfig, HeaderValueConfig, LoadedWorkflowSet, ModelConfig,
-    ProviderConfig, RouteConfig, RouterClauseConfig, RuleGraphConfig, RuleGraphNodeType,
-    RuntimeState, WasmCapability, WasmPluginNodeConfig,
+    CodeRunnerNodeConfig, ConditionMode, GatewayConfig, HeaderValueConfig, LoadedWorkflowSet,
+    ModelConfig, ProviderConfig, RouteConfig, RouterClauseConfig, RuleGraphConfig,
+    RuleGraphNodeType, RuntimeState, WasmCapability, WasmPluginNodeConfig,
 };
 use crate::crypto::decrypt_header_value;
 use crate::rules::{RequestContext, build_header_map, evaluate_expression, render_template};
@@ -142,6 +142,77 @@ struct RuntimeExecuteOutput {
     logs: Vec<RuntimeLogEntry>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeRunnerInput<'a> {
+    method: &'a str,
+    path: &'a str,
+    headers: BTreeMap<String, String>,
+    context: BTreeMap<String, String>,
+    provider: Option<CodeRunnerProvider<'a>>,
+    model: Option<CodeRunnerModel<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeRunnerProvider<'a> {
+    id: &'a str,
+    name: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeRunnerModel<'a> {
+    id: &'a str,
+    name: &'a str,
+    provider_id: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeRunnerOutput {
+    #[serde(default)]
+    context_patch: Vec<CodeRunnerContextPatchOp>,
+    #[serde(default)]
+    header_ops: Vec<CodeRunnerHeaderOp>,
+    #[serde(default)]
+    path_rewrite: Option<String>,
+    #[serde(default)]
+    next_port: Option<String>,
+    #[serde(default)]
+    logs: Vec<CodeRunnerLogEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+enum CodeRunnerContextPatchOp {
+    Set { key: String, value: String },
+    Remove { key: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+enum CodeRunnerHeaderOp {
+    Set { name: String, value: String },
+    Append { name: String, value: String },
+    Remove { name: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum CodeRunnerLogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodeRunnerLogEntry {
+    level: CodeRunnerLogLevel,
+    message: String,
+}
+
 trait PluginNodeRuntime {
     fn execute(
         &self,
@@ -155,6 +226,7 @@ trait PluginNodeRuntime {
 }
 
 struct WasmtimePluginRuntime;
+struct QuickJsCodeRunnerRuntime;
 
 struct PluginStoreData {
     limits: StoreLimits,
@@ -163,6 +235,7 @@ struct PluginStoreData {
 }
 
 static WASMTIME_PLUGIN_RUNTIME: WasmtimePluginRuntime = WasmtimePluginRuntime;
+static QUICKJS_CODE_RUNNER_RUNTIME: QuickJsCodeRunnerRuntime = QuickJsCodeRunnerRuntime;
 
 impl WasiView for PluginStoreData {
     fn ctx(&mut self) -> WasiCtxView<'_> {
@@ -289,6 +362,58 @@ impl PluginNodeRuntime for WasmtimePluginRuntime {
             })?;
 
         Ok(from_wit_execute_output(output))
+    }
+}
+
+impl QuickJsCodeRunnerRuntime {
+    fn execute(
+        &self,
+        node_id: &str,
+        node_config: &CodeRunnerNodeConfig,
+        input: &RuntimeExecuteInput,
+    ) -> Result<RuntimeExecuteOutput, String> {
+        let js_runtime = JsRuntime::new().map_err(|error| {
+            format!("code_runner node '{node_id}' failed to initialize runtime: {error}")
+        })?;
+        js_runtime.set_memory_limit(node_config.max_memory_bytes as usize);
+
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_millis(node_config.timeout_ms);
+        js_runtime.set_interrupt_handler(Some(Box::new(move || start.elapsed() >= timeout)));
+
+        let js_context = JsContext::full(&js_runtime).map_err(|error| {
+            format!("code_runner node '{node_id}' failed to initialize context: {error}")
+        })?;
+        let input_json =
+            serde_json::to_string(&build_code_runner_input(input)).map_err(|error| {
+                format!("code_runner node '{node_id}' failed to serialize input: {error}")
+            })?;
+        let script = normalize_code_runner_source(node_config.code.as_str());
+
+        js_context.with(|ctx| -> Result<RuntimeExecuteOutput, String> {
+            let globals = ctx.globals();
+            globals
+                .set("__code_runner_input_json", input_json.as_str())
+                .map_err(|error| {
+                    format!("code_runner node '{node_id}' failed to install input: {error}")
+                })?;
+            ctx.eval::<(), _>(script.as_str()).map_err(|error| {
+                format!("code_runner node '{node_id}' execution failed: {error}")
+            })?;
+            ctx.eval::<String, _>(
+                r#"
+                (() => {
+                  if (typeof run !== "function") {
+                    throw new Error("code_runner must define function run(input)");
+                  }
+                  const input = JSON.parse(globalThis.__code_runner_input_json);
+                  return JSON.stringify(run(input) ?? {});
+                })()
+                "#,
+            )
+            .map_err(|error| format!("code_runner node '{node_id}' execution failed: {error}"))
+            .and_then(|json| parse_code_runner_output(node_id, json.as_str()))
+        })
     }
 }
 
@@ -604,11 +729,9 @@ fn execute_rule_graph<'a>(
             RuleGraphNodeType::WasmPlugin => {
                 let port = execute_wasm_runtime_node(
                     node.id.as_str(),
-                    node.wasm_plugin
-                        .as_ref()
-                        .ok_or_else(|| {
-                            format!("rule_graph node '{}' missing wasm_plugin config", node.id)
-                        })?,
+                    node.wasm_plugin.as_ref().ok_or_else(|| {
+                        format!("rule_graph node '{}' missing wasm_plugin config", node.id)
+                    })?,
                     plugin_registry,
                     runtime,
                     method.as_str(),
@@ -663,10 +786,9 @@ fn execute_rule_graph<'a>(
                 let mut matched_target = None;
                 for branch in &node_config.branches {
                     let mut branch_plugin_config = node_config.plugin.clone();
-                    branch_plugin_config.config.insert(
-                        "expr".to_string(),
-                        toml::Value::String(branch.expr.clone()),
-                    );
+                    branch_plugin_config
+                        .config
+                        .insert("expr".to_string(), toml::Value::String(branch.expr.clone()));
                     branch_plugin_config.config.insert(
                         "branch_id".to_string(),
                         toml::Value::String(branch.id.clone()),
@@ -690,6 +812,31 @@ fn execute_rule_graph<'a>(
                     }
                 }
                 matched_target.or(node_config.fallback_node_id.as_deref())
+            }
+            RuleGraphNodeType::CodeRunner => {
+                let port = execute_code_runner_node(
+                    node.id.as_str(),
+                    node.code_runner.as_ref().ok_or_else(|| {
+                        format!("rule_graph node '{}' missing code_runner config", node.id)
+                    })?,
+                    method.as_str(),
+                    headers,
+                    selected_provider,
+                    selected_model,
+                    &mut resolved_path,
+                    &mut workflow_context,
+                    &mut outgoing_headers,
+                )?;
+                match port.as_deref() {
+                    Some(port) => Some(next_condition_edge(graph, current_id, port)?.ok_or_else(|| {
+                        format!(
+                            "code_runner node '{}' returned port '{}' but no outgoing edge matched it",
+                            node.id, port
+                        )
+                    })?),
+                    None => next_condition_edge(graph, current_id, "default")?
+                        .or(next_linear_edge(graph, current_id)?),
+                }
             }
             RuleGraphNodeType::Router => {
                 let node_config = node.router.as_ref().ok_or_else(|| {
@@ -972,6 +1119,81 @@ fn build_runtime_execute_input(
     })
 }
 
+fn build_code_runner_input(input: &RuntimeExecuteInput) -> CodeRunnerInput<'_> {
+    CodeRunnerInput {
+        method: input.request_method.as_str(),
+        path: input.current_path.as_str(),
+        headers: input
+            .request_headers
+            .iter()
+            .map(|header| (header.name.to_ascii_lowercase(), header.value.clone()))
+            .collect(),
+        context: input.workflow_context.iter().cloned().collect(),
+        provider: (!input.selected_provider_id.is_empty()).then(|| CodeRunnerProvider {
+            id: input.selected_provider_id.as_str(),
+            name: input.selected_provider_id.as_str(),
+        }),
+        model: (!input.selected_model_id.is_empty()).then(|| CodeRunnerModel {
+            id: input.selected_model_id.as_str(),
+            name: input.selected_model_id.as_str(),
+            provider_id: input.selected_provider_id.as_str(),
+        }),
+    }
+}
+
+fn normalize_code_runner_source(source: &str) -> String {
+    let trimmed = source.trim_start();
+    if trimmed.starts_with("export function run") {
+        source.replacen("export function run", "function run", 1)
+    } else {
+        source.to_string()
+    }
+}
+
+fn parse_code_runner_output(node_id: &str, json: &str) -> Result<RuntimeExecuteOutput, String> {
+    let output = serde_json::from_str::<CodeRunnerOutput>(json).map_err(|error| {
+        format!("code_runner node '{node_id}' returned invalid output JSON: {error}")
+    })?;
+    Ok(RuntimeExecuteOutput {
+        context_ops: output
+            .context_patch
+            .into_iter()
+            .map(|op| match op {
+                CodeRunnerContextPatchOp::Set { key, value } => {
+                    RuntimeContextPatchOp::Set { key, value }
+                }
+                CodeRunnerContextPatchOp::Remove { key } => RuntimeContextPatchOp::Remove { key },
+            })
+            .collect(),
+        header_ops: output
+            .header_ops
+            .into_iter()
+            .map(|op| match op {
+                CodeRunnerHeaderOp::Set { name, value } => RuntimeHeaderOp::Set { name, value },
+                CodeRunnerHeaderOp::Append { name, value } => {
+                    RuntimeHeaderOp::Append { name, value }
+                }
+                CodeRunnerHeaderOp::Remove { name } => RuntimeHeaderOp::Remove { name },
+            })
+            .collect(),
+        path_rewrite: output.path_rewrite,
+        next_port: output.next_port,
+        logs: output
+            .logs
+            .into_iter()
+            .map(|log| RuntimeLogEntry {
+                level: match log.level {
+                    CodeRunnerLogLevel::Debug => RuntimeLogLevel::Debug,
+                    CodeRunnerLogLevel::Info => RuntimeLogLevel::Info,
+                    CodeRunnerLogLevel::Warn => RuntimeLogLevel::Warn,
+                    CodeRunnerLogLevel::Error => RuntimeLogLevel::Error,
+                },
+                message: log.message,
+            })
+            .collect(),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_wasm_runtime_node(
     node_id: &str,
@@ -1026,6 +1248,58 @@ fn execute_wasm_runtime_node(
     Ok(runtime_output.next_port)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_code_runner_node(
+    node_id: &str,
+    node_config: &CodeRunnerNodeConfig,
+    method: &str,
+    headers: &HeaderMap,
+    selected_provider: Option<&ProviderConfig>,
+    selected_model: Option<&ModelConfig>,
+    resolved_path: &mut String,
+    workflow_context: &mut HashMap<String, String>,
+    outgoing_headers: &mut HashMap<String, Vec<String>>,
+) -> Result<Option<String>, String> {
+    let runtime_input = RuntimeExecuteInput {
+        request_method: method.to_string(),
+        current_path: resolved_path.to_string(),
+        request_headers: current_request_headers(headers, outgoing_headers),
+        workflow_context: workflow_context
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        selected_provider_id: selected_provider
+            .map(|provider| provider.id.clone())
+            .unwrap_or_default(),
+        selected_model_id: selected_model
+            .map(|model| model.id.clone())
+            .unwrap_or_default(),
+        node_config: RuntimeNodeConfig {
+            manifest: RuntimePluginManifest {
+                id: node_id.to_string(),
+                name: "Code Runner".to_string(),
+                version: String::new(),
+                description: String::new(),
+                supported_output_ports: Vec::new(),
+                default_config_schema_hints_json: None,
+                capabilities: Vec::new(),
+            },
+            grants: Vec::new(),
+            config_json: None,
+        },
+    };
+
+    let output = QUICKJS_CODE_RUNNER_RUNTIME.execute(node_id, node_config, &runtime_input)?;
+    apply_code_runner_output(
+        node_id,
+        &output,
+        workflow_context,
+        outgoing_headers,
+        resolved_path,
+    );
+    Ok(output.next_port)
+}
+
 fn apply_runtime_output(
     node_id: &str,
     plugin: &LoadedPlugin,
@@ -1059,6 +1333,71 @@ fn apply_runtime_output(
                 node_id = %node_id,
                 wasm_log = %log.message,
                 "[wasm][error]"
+            ),
+        }
+    }
+
+    for op in &output.context_ops {
+        match op {
+            RuntimeContextPatchOp::Set { key, value } => {
+                workflow_context.insert(key.clone(), value.clone());
+            }
+            RuntimeContextPatchOp::Remove { key } => {
+                workflow_context.remove(key);
+            }
+        }
+    }
+
+    for op in &output.header_ops {
+        match op {
+            RuntimeHeaderOp::Set { name, value } => {
+                outgoing_headers.insert(name.to_ascii_lowercase(), vec![value.clone()]);
+            }
+            RuntimeHeaderOp::Append { name, value } => {
+                outgoing_headers
+                    .entry(name.to_ascii_lowercase())
+                    .or_default()
+                    .push(value.clone());
+            }
+            RuntimeHeaderOp::Remove { name } => {
+                outgoing_headers.remove(&name.to_ascii_lowercase());
+            }
+        }
+    }
+
+    if let Some(path_rewrite) = &output.path_rewrite {
+        *resolved_path = path_rewrite.clone();
+    }
+}
+
+fn apply_code_runner_output(
+    node_id: &str,
+    output: &RuntimeExecuteOutput,
+    workflow_context: &mut HashMap<String, String>,
+    outgoing_headers: &mut HashMap<String, Vec<String>>,
+    resolved_path: &mut String,
+) {
+    for log in &output.logs {
+        match log.level {
+            RuntimeLogLevel::Debug => info!(
+                node_id = %node_id,
+                code_runner_log = %log.message,
+                "[code-runner][debug]"
+            ),
+            RuntimeLogLevel::Info => info!(
+                node_id = %node_id,
+                code_runner_log = %log.message,
+                "[code-runner][info]"
+            ),
+            RuntimeLogLevel::Warn => warn!(
+                node_id = %node_id,
+                code_runner_log = %log.message,
+                "[code-runner][warn]"
+            ),
+            RuntimeLogLevel::Error => error!(
+                node_id = %node_id,
+                code_runner_log = %log.message,
+                "[code-runner][error]"
             ),
         }
     }
@@ -1714,17 +2053,16 @@ fn bad_gateway_error(error: impl std::fmt::Display) -> (StatusCode, String) {
 mod tests {
     use super::{
         PluginNodeRuntime, RequestResolution, RuntimeContextPatchOp, RuntimeExecuteInput,
-        RuntimeExecuteOutput, RuntimeNodeConfig, RuntimePluginManifest,
-        WASMTIME_PLUGIN_RUNTIME, execute_rule_graph, plugin_workspace_root,
-        resolve_plugin_network_policy, resolve_plugin_preopens, resolve_request,
-        socket_addr_allowed,
+        RuntimeExecuteOutput, RuntimeNodeConfig, RuntimePluginManifest, WASMTIME_PLUGIN_RUNTIME,
+        execute_rule_graph, plugin_workspace_root, resolve_plugin_network_policy,
+        resolve_plugin_preopens, resolve_request, socket_addr_allowed,
     };
     use crate::config::{
         GatewayConfig, LoadedWorkflowSet, ProviderConfig, WasmCapability, WasmPluginNodeConfig,
         WorkflowFileConfig, WorkflowIndexEntry, parse_config,
     };
     use crate::wasm_plugins::{PluginRegistry, load_plugin_registry};
-    use axum::http::{HeaderMap, Method, Uri};
+    use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
     use std::collections::BTreeMap;
     use std::fs;
     use std::net::SocketAddr;
@@ -1880,11 +2218,35 @@ target = "plugin"
         runtime: &dyn PluginNodeRuntime,
         path: &str,
     ) -> Result<RequestResolution<'a>, String> {
+        execute_test_graph_with_headers(config, registry, runtime, path, &[])
+    }
+
+    fn execute_test_graph_with_headers<'a>(
+        config: &'a GatewayConfig,
+        registry: &PluginRegistry,
+        runtime: &dyn PluginNodeRuntime,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<RequestResolution<'a>, String> {
         let graph = config.rule_graph.as_ref().expect("graph should exist");
         let method = Method::POST;
         let uri = path.parse::<Uri>().expect("path should parse");
-        let headers = HeaderMap::new();
-        execute_rule_graph(config, registry, runtime, graph, &method, &uri, &headers)
+        let mut request_headers = HeaderMap::new();
+        for (name, value) in headers {
+            request_headers.insert(
+                HeaderName::from_bytes(name.as_bytes()).expect("header name should parse"),
+                HeaderValue::from_str(value).expect("header value should parse"),
+            );
+        }
+        execute_rule_graph(
+            config,
+            registry,
+            runtime,
+            graph,
+            &method,
+            &uri,
+            &request_headers,
+        )
     }
 
     fn header_values(resolution: &RequestResolution<'_>, name: &str) -> Vec<String> {
@@ -2016,6 +2378,177 @@ target = "end"
         assert_eq!(resolution.provider.id, "kimi");
         assert_eq!(header_values(&resolution, "x-intent"), vec!["code"]);
         assert_eq!(runtime.calls(), 1);
+    }
+
+    #[test]
+    fn executes_code_runner_node_that_sets_context_and_chooses_next_port() {
+        let config = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "runner"
+type = "code_runner"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.code_runner]
+language = "javascript"
+timeout_ms = 20
+max_memory_bytes = 16777216
+code = """
+export function run(input) {
+  const tenant = input.headers['x-tenant'] ?? 'default';
+  return {
+    contextPatch: [{ op: 'set', key: 'tenant', value: tenant }],
+    headerOps: [{ op: 'set', name: 'x-normalized-tenant', value: tenant }],
+    nextPort: tenant === 'enterprise' ? 'enterprise' : 'default'
+  };
+}
+"""
+
+[[rule_graph.nodes]]
+id = "enterprise-provider"
+type = "route_provider"
+position = { x = 260.0, y = 0.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+
+[[rule_graph.nodes]]
+id = "fallback-provider"
+type = "route_provider"
+position = { x = 260.0, y = 120.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 380.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "start-next"
+source = "start"
+target = "runner"
+
+[[rule_graph.edges]]
+id = "runner-enterprise"
+source = "runner"
+source_handle = "enterprise"
+target = "enterprise-provider"
+
+[[rule_graph.edges]]
+id = "runner-default"
+source = "runner"
+source_handle = "default"
+target = "fallback-provider"
+
+[[rule_graph.edges]]
+id = "enterprise-next"
+source = "enterprise-provider"
+target = "end"
+
+[[rule_graph.edges]]
+id = "fallback-next"
+source = "fallback-provider"
+target = "end"
+"#,
+        )
+        .expect("config should parse");
+        let registry = load_test_registry(&[], &[]);
+        let runtime = FakePluginRuntime::succeeds(RuntimeExecuteOutput::default());
+
+        let resolution = execute_test_graph_with_headers(
+            &config,
+            &registry,
+            &runtime,
+            "/v1/chat/completions",
+            &[("x-tenant", "enterprise")],
+        )
+        .expect("graph execution should succeed");
+
+        assert_eq!(resolution.provider.id, "kimi");
+        assert_eq!(
+            header_values(&resolution, "x-normalized-tenant"),
+            vec!["enterprise"]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_code_runner_result_shape() {
+        let config = parse_config(
+            r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "runner"
+type = "code_runner"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.code_runner]
+language = "javascript"
+timeout_ms = 20
+max_memory_bytes = 16777216
+code = "export function run(input) { return 42; }"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 240.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "edge-1"
+source = "start"
+target = "runner"
+
+[[rule_graph.edges]]
+id = "edge-2"
+source = "runner"
+target = "end"
+"#,
+        )
+        .expect("config should parse");
+        let registry = load_test_registry(&[], &[]);
+        let runtime = FakePluginRuntime::succeeds(RuntimeExecuteOutput::default());
+
+        let error = execute_test_graph(&config, &registry, &runtime, "/v1/chat/completions")
+            .expect_err("invalid code runner result should fail");
+
+        assert!(
+            error.contains("code_runner node 'runner' returned invalid output JSON"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

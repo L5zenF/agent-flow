@@ -2,7 +2,7 @@ listen = "127.0.0.1:9001"
 admin_listen = "127.0.0.1:9002"
 default_secret_env = "PROXY_SECRET"
 workflows_dir = "workflows"
-active_workflow_id = "wasm-match-example"
+active_workflow_id = "code-runner-example"
 
 [[providers]]
 id = "kimi"
@@ -67,3 +67,9 @@ id = "wasm-match-example"
 name = "Wasm Match Example"
 file = "wasm-match-example.toml"
 description = "Example workflow showing branch-based wasm_match routing"
+
+[[workflows]]
+id = "code-runner-example"
+name = "Code Runner Example"
+file = "code-runner-example.toml"
+description = "Example workflow showing JavaScript request cleanup with code_runner"

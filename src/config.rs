@@ -201,6 +201,8 @@ pub struct RuleGraphNode {
     pub wasm_plugin: Option<WasmPluginNodeConfig>,
     #[serde(default)]
     pub wasm_match: Option<WasmMatchNodeConfig>,
+    #[serde(default)]
+    pub code_runner: Option<CodeRunnerNodeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +237,7 @@ pub enum RuleGraphNodeType {
     SetHeaderIfAbsent,
     WasmPlugin,
     WasmMatch,
+    CodeRunner,
     Note,
     End,
 }
@@ -379,6 +382,21 @@ pub struct WasmMatchBranchConfig {
     pub id: String,
     pub expr: String,
     pub target_node_id: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeRunnerLanguage {
+    Javascript,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeRunnerNodeConfig {
+    pub language: CodeRunnerLanguage,
+    #[serde(default = "default_wasm_plugin_timeout_ms")]
+    pub timeout_ms: u64,
+    pub max_memory_bytes: u64,
+    pub code: String,
 }
 
 pub fn load_config(path: &Path) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
@@ -1102,6 +1120,9 @@ fn validate_rule_graph_node(
         RuleGraphNodeType::WasmMatch => {
             validate_wasm_match_node(node.id.as_str(), graph, node.wasm_match.as_ref())?
         }
+        RuleGraphNodeType::CodeRunner => {
+            validate_code_runner_node(node.id.as_str(), node.code_runner.as_ref())?
+        }
     }
 
     Ok(())
@@ -1350,7 +1371,10 @@ fn validate_wasm_match_node(
     };
     validate_wasm_plugin_node(node_id, Some(&config.plugin))?;
     if config.branches.is_empty() {
-        return Err(format!("rule_graph node '{node_id}' must define at least one wasm_match branch").into());
+        return Err(format!(
+            "rule_graph node '{node_id}' must define at least one wasm_match branch"
+        )
+        .into());
     }
 
     let node_ids = graph
@@ -1398,6 +1422,31 @@ fn validate_wasm_match_node(
             )
             .into());
         }
+    }
+
+    Ok(())
+}
+
+fn validate_code_runner_node(
+    node_id: &str,
+    config: Option<&CodeRunnerNodeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = config else {
+        return Err(format!("rule_graph node '{node_id}' missing code_runner config").into());
+    };
+    if config.timeout_ms == 0 {
+        return Err(
+            format!("rule_graph node '{node_id}' timeout_ms must be greater than zero").into(),
+        );
+    }
+    if config.max_memory_bytes == 0 {
+        return Err(format!(
+            "rule_graph node '{node_id}' max_memory_bytes must be greater than zero"
+        )
+        .into());
+    }
+    if config.code.trim().is_empty() {
+        return Err(format!("rule_graph node '{node_id}' code cannot be empty").into());
     }
 
     Ok(())
@@ -1557,9 +1606,9 @@ fn default_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        GatewayConfig, GraphPosition, RuleGraphConfig, RuleGraphNode, RuleGraphNodeType, RuleScope,
-        WasmCapability, load_config, load_workflow_file, load_workflow_set, normalize_legacy_rule_graph,
-        parse_config, resolve_workflows_dir,
+        CodeRunnerLanguage, GatewayConfig, GraphPosition, RuleGraphConfig, RuleGraphNode,
+        RuleGraphNodeType, RuleScope, WasmCapability, load_config, load_workflow_file,
+        load_workflow_set, normalize_legacy_rule_graph, parse_config, resolve_workflows_dir,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1758,6 +1807,51 @@ target = "matcher"
 id = "edge-2"
 source = "matcher"
 source_handle = "default"
+target = "end"
+"#;
+
+    const VALID_CODE_RUNNER_CONFIG: &str = r#"
+listen = "127.0.0.1:9001"
+admin_listen = "127.0.0.1:9002"
+
+[[providers]]
+id = "kimi"
+name = "Kimi"
+base_url = "https://api.kimi.com"
+
+[rule_graph]
+version = 1
+start_node_id = "start"
+
+[[rule_graph.nodes]]
+id = "start"
+type = "start"
+position = { x = 0.0, y = 0.0 }
+
+[[rule_graph.nodes]]
+id = "runner"
+type = "code_runner"
+position = { x = 120.0, y = 0.0 }
+
+[rule_graph.nodes.code_runner]
+language = "javascript"
+timeout_ms = 25
+max_memory_bytes = 16777216
+code = "export function run(input) { return {}; }"
+
+[[rule_graph.nodes]]
+id = "end"
+type = "end"
+position = { x = 240.0, y = 0.0 }
+
+[[rule_graph.edges]]
+id = "edge-1"
+source = "start"
+target = "runner"
+
+[[rule_graph.edges]]
+id = "edge-2"
+source = "runner"
 target = "end"
 "#;
 
@@ -2049,6 +2143,7 @@ position = { x = 0.0, y = 0.0 }
                     note_node: None,
                     wasm_plugin: None,
                     wasm_match: None,
+                    code_runner: None,
                 }],
                 edges: Vec::new(),
             }),
@@ -2100,6 +2195,7 @@ position = { x = 0.0, y = 0.0 }
                     note_node: None,
                     wasm_plugin: None,
                     wasm_match: None,
+                    code_runner: None,
                 }],
                 edges: Vec::new(),
             }),
@@ -2512,8 +2608,7 @@ target = "end"
 
     #[test]
     fn parses_wasm_match_node() {
-        let config =
-            parse_config(VALID_WASM_MATCH_CONFIG).expect("wasm match config should parse");
+        let config = parse_config(VALID_WASM_MATCH_CONFIG).expect("wasm match config should parse");
         let graph = config.rule_graph.expect("graph should exist");
         let node = graph
             .nodes
@@ -2530,7 +2625,10 @@ target = "end"
         assert_eq!(plugin.plugin.timeout_ms, 20);
         assert_eq!(plugin.plugin.fuel, Some(500000));
         assert_eq!(plugin.plugin.max_memory_bytes, 16_777_216);
-        assert_eq!(plugin.plugin.granted_capabilities, vec![WasmCapability::Log]);
+        assert_eq!(
+            plugin.plugin.granted_capabilities,
+            vec![WasmCapability::Log]
+        );
         assert_eq!(plugin.branches.len(), 1);
         assert_eq!(plugin.branches[0].id, "chat");
         assert_eq!(plugin.branches[0].expr, "ctx.header.x-tenant == enterprise");
@@ -2544,6 +2642,40 @@ target = "end"
                 .and_then(|value| value.as_str()),
             Some("x-tenant")
         );
+    }
+
+    #[test]
+    fn parses_code_runner_node() {
+        let config =
+            parse_config(VALID_CODE_RUNNER_CONFIG).expect("code runner config should parse");
+        let graph = config.rule_graph.expect("graph should exist");
+        let node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "runner")
+            .expect("runner node should exist");
+
+        assert_eq!(node.node_type, RuleGraphNodeType::CodeRunner);
+        let runner = node
+            .code_runner
+            .as_ref()
+            .expect("code runner config should exist");
+        assert_eq!(runner.language, CodeRunnerLanguage::Javascript);
+        assert_eq!(runner.timeout_ms, 25);
+        assert_eq!(runner.max_memory_bytes, 16_777_216);
+        assert_eq!(runner.code, "export function run(input) { return {}; }");
+    }
+
+    #[test]
+    fn rejects_empty_code_runner_code() {
+        let invalid = VALID_CODE_RUNNER_CONFIG.replace(
+            "code = \"export function run(input) { return {}; }\"",
+            "code = \"   \"",
+        );
+        let error = parse_config(&invalid).expect_err("empty code should fail");
+        let message = error.to_string();
+
+        assert_eq!(message, "rule_graph node 'runner' code cannot be empty");
     }
 
     #[test]

@@ -1,0 +1,120 @@
+[workflow]
+version = 1
+start_node_id = "start"
+
+[[workflow.nodes]]
+id = "start"
+type = "start"
+
+[workflow.nodes.position]
+x = 40.0
+y = 220.0
+
+[[workflow.nodes]]
+id = "note-1"
+type = "note"
+
+[workflow.nodes.position]
+x = 260.0
+y = -10.0
+
+[workflow.nodes.note_node]
+text = """
+示例说明：
+1. code_runner 执行一段 JavaScript
+2. 读取并清洗 x-target / x-tenant 请求头
+3. 写回 workflow context 和请求头
+4. 然后继续走默认分支到 provider
+5. 最后统一改写到上游 chat completions 路径
+"""
+
+[[workflow.nodes]]
+id = "code-runner-1"
+type = "code_runner"
+
+[workflow.nodes.position]
+x = 320.0
+y = 210.0
+
+[workflow.nodes.code_runner]
+language = "javascript"
+timeout_ms = 20
+max_memory_bytes = 16777216
+code = """
+export function run(input) {
+  const rawTarget = input.headers["x-target"] ?? "chat";
+  const rawTenant = input.headers["x-tenant"] ?? "default";
+
+  const cleanedTarget = rawTarget.trim().toLowerCase();
+  const cleanedTenant = rawTenant.trim().toLowerCase();
+
+  return {
+    contextPatch: [
+      { op: "set", key: "route_hint", value: cleanedTarget },
+      { op: "set", key: "tenant", value: cleanedTenant }
+    ],
+    headerOps: [
+      { op: "set", name: "x-target-normalized", value: cleanedTarget },
+      { op: "set", name: "x-tenant-normalized", value: cleanedTenant },
+      { op: "remove", name: "x-debug-temp" }
+    ],
+    logs: [
+      {
+        level: "info",
+        message: `normalized target=${cleanedTarget} tenant=${cleanedTenant}`
+      }
+    ]
+  };
+}
+"""
+
+[[workflow.nodes]]
+id = "provider-kimi"
+type = "route_provider"
+
+[workflow.nodes.position]
+x = 690.0
+y = 210.0
+
+[workflow.nodes.route_provider]
+provider_id = "kimi"
+
+[[workflow.nodes]]
+id = "rewrite-path"
+type = "rewrite_path"
+
+[workflow.nodes.position]
+x = 920.0
+y = 210.0
+
+[workflow.nodes.rewrite_path]
+value = "/coding/v1/chat/completions"
+
+[[workflow.nodes]]
+id = "end"
+type = "end"
+
+[workflow.nodes.position]
+x = 1140.0
+y = 210.0
+
+[[workflow.edges]]
+id = "start-next"
+source = "start"
+target = "code-runner-1"
+
+[[workflow.edges]]
+id = "code-runner-1-default"
+source = "code-runner-1"
+source_handle = "default"
+target = "provider-kimi"
+
+[[workflow.edges]]
+id = "provider-kimi-next"
+source = "provider-kimi"
+target = "rewrite-path"
+
+[[workflow.edges]]
+id = "rewrite-path-next"
+source = "rewrite-path"
+target = "end"

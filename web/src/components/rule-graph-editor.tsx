@@ -3,6 +3,7 @@ import {
   ArrowRightLeft,
   CircleHelp,
   CopyPlus,
+  FileCode2,
   GitBranch,
   Grip,
   Hand,
@@ -84,6 +85,7 @@ type RuleCanvasNodeData = {
   templateSuggestions: string[];
   onUpdateNode: (nextNode: RuleGraphNode) => void;
   onOpenWasmConfig: () => void;
+  onOpenCodeRunnerConfig: () => void;
   onDeleteNode: () => void;
 };
 
@@ -152,6 +154,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph.start_node_id);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [wasmConfigNodeId, setWasmConfigNodeId] = useState<string | null>(null);
+  const [codeRunnerConfigNodeId, setCodeRunnerConfigNodeId] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const validation = useMemo(() => validateGraph(graph, config, pluginManifests), [graph, config, pluginManifests]);
   const providerOptions = useMemo(
@@ -182,6 +185,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   const nodeLibrary = useMemo<NodeLibraryItem[]>(
     () => [
       ...BASE_NODE_LIBRARY,
+      { type: "code_runner", label: "Code Runner", shortLabel: "Code" },
       ...pluginManifests.map((plugin) => ({
         type: "wasm_plugin" as const,
         label: plugin.name || plugin.id,
@@ -241,6 +245,13 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
         : null,
     [modalWasmNode, pluginManifestMap],
   );
+  const modalCodeRunnerNode = useMemo(
+    () =>
+      graph.nodes.find(
+        (node) => node.id === codeRunnerConfigNodeId && node.type === "code_runner",
+      ) ?? null,
+    [codeRunnerConfigNodeId, graph.nodes],
+  );
 
   const flowNodes = useMemo<Array<Node<RuleCanvasNodeData>>>(
     () =>
@@ -267,6 +278,10 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           onOpenWasmConfig: () => {
             setSelectedNodeId(node.id);
             setWasmConfigNodeId(node.id);
+          },
+          onOpenCodeRunnerConfig: () => {
+            setSelectedNodeId(node.id);
+            setCodeRunnerConfigNodeId(node.id);
           },
           onDeleteNode: () => {
             const nextGraph = removeNodeFromGraph(graph, node.id);
@@ -639,6 +654,16 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
             updateGraph(setConfig, replaceNode(graph, modalWasmNode.id, nextNode));
           }}
         />
+      <CodeRunnerConfigModal
+        node={modalCodeRunnerNode}
+        onClose={() => setCodeRunnerConfigNodeId(null)}
+        onUpdateNode={(nextNode) => {
+          if (!modalCodeRunnerNode || modalCodeRunnerNode.type !== "code_runner") {
+            return;
+          }
+          updateGraph(setConfig, replaceNode(graph, modalCodeRunnerNode.id, nextNode));
+        }}
+      />
     </>
   );
 }
@@ -649,6 +674,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
   const noteEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const routerBranches = draft.router?.rules ?? [];
   const routerHandleCount = routerBranches.length + 1;
+  const codeRunner = draft.code_runner ?? null;
   const pluginOutputPorts =
     data.nodeType === "wasm_plugin"
       ? data.pluginManifest?.supported_output_ports?.length
@@ -683,6 +709,8 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
       <FileText className="h-4 w-4" />
     ) : data.nodeType === "wasm_plugin" || data.nodeType === "wasm_match" ? (
       <Puzzle className="h-4 w-4" />
+    ) : data.nodeType === "code_runner" ? (
+      <FileCode2 className="h-4 w-4" />
     ) : data.nodeType === "start" || data.nodeType === "end" ? (
       <Grip className="h-4 w-4" />
     ) : (
@@ -850,7 +878,20 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {data.nodeType === "wasm_plugin" || data.nodeType === "wasm_match" ? (
+            {data.nodeType === "code_runner" ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onOpenCodeRunnerConfig();
+                }}
+                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+                aria-label="Configure code runner"
+                title="Configure code runner"
+              >
+                <FileCode2 className="h-4 w-4" />
+              </button>
+            ) : data.nodeType === "wasm_plugin" || data.nodeType === "wasm_match" ? (
               <>
                 <button
                   type="button"
@@ -1319,6 +1360,32 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                 })
               }
             />
+          ) : null}
+
+          {draft.type === "code_runner" ? (
+            <div className="space-y-2">
+              <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
+                <p className="line-clamp-4 text-[12px] leading-5 text-zinc-600">
+                  {describeCodeRunner(draft)}
+                </p>
+                {codeRunner ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                      JavaScript
+                    </span>
+                    <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+                      {codeRunner.timeout_ms} ms
+                    </span>
+                    <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+                      {formatMemoryBytes(codeRunner.max_memory_bytes)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-5 text-zinc-500">
+                Use the config button to edit code and runtime limits.
+              </div>
+            </div>
           ) : null}
 
           {draft.type === "wasm_plugin" || draft.type === "wasm_match" ? (
@@ -1876,6 +1943,157 @@ function WasmConfigModal({
   );
 }
 
+function CodeRunnerConfigModal({
+  node,
+  onClose,
+  onUpdateNode,
+}: {
+  node: RuleGraphNode | null;
+  onClose: () => void;
+  onUpdateNode: (nextNode: RuleGraphNode) => void;
+}) {
+  if (!node || node.type !== "code_runner") return null;
+
+  const codeRunner = getCodeRunnerConfig(node);
+  if (!codeRunner) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 px-4 py-6 backdrop-blur-[2px]">
+      <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-100 px-6 py-5">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">Code Runner Config</div>
+            <div className="mt-2 text-xl font-semibold text-zinc-950">JavaScript transform node</div>
+            <div className="mt-1 text-sm leading-6 text-zinc-600">
+              Edit the script and runtime limits for this code runner node.
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-zinc-500">
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 uppercase tracking-[0.16em] text-zinc-600">
+                JavaScript
+              </span>
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-mono">
+                {node.id}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+            aria-label="Close modal"
+          >
+            <Minus className="h-4 w-4 rotate-45" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-6 py-5">
+          <InspectorSection title="Overview" subtitle="This node runs a JavaScript transform before routing continues.">
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                Runtime: JavaScript
+              </span>
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+                Transform only
+              </span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-zinc-600">
+              The script should export <span className="font-mono text-zinc-900">run(input)</span> and return
+              context, header, or routing updates.
+            </p>
+          </InspectorSection>
+
+          <InspectorSection title="Code" subtitle="Write the JavaScript transformation logic here.">
+            <div className="grid grid-cols-1 gap-2">
+              <FieldLabel label="JavaScript Source" />
+              <textarea
+                value={codeRunner.code}
+                onChange={(event) =>
+                  onUpdateNode(
+                    updateCodeRunnerConfig(node, {
+                      ...codeRunner,
+                      code: event.target.value,
+                    }),
+                  )
+                }
+                onBlur={(event) =>
+                  onUpdateNode(
+                    updateCodeRunnerConfig(node, {
+                      ...codeRunner,
+                      code: event.target.value,
+                    }),
+                  )
+                }
+                rows={14}
+                spellCheck={false}
+                className="nodrag nopan nowheel w-full resize-y rounded-2xl border border-zinc-200 bg-zinc-950 px-4 py-3 font-mono text-[12px] leading-6 text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-emerald-400"
+                placeholder={'export function run(input) {\n  return {\n    logs: [{ level: "info", message: "hello" }],\n  };\n}'}
+              />
+            </div>
+          </InspectorSection>
+
+          <InspectorSection title="Runtime Limits" subtitle="Keep the script fast and bounded.">
+            <div className="grid grid-cols-1 gap-2">
+              <FieldLabel label="Timeout (ms)" />
+              <InlineInput
+                value={String(codeRunner.timeout_ms)}
+                placeholder="20"
+                onChange={(value) =>
+                  onUpdateNode(
+                    updateCodeRunnerConfig(node, {
+                      ...codeRunner,
+                      timeout_ms: value === "" ? 0 : Number(value),
+                    }),
+                  )
+                }
+                onCommit={(value) =>
+                  onUpdateNode(
+                    updateCodeRunnerConfig(node, {
+                      ...codeRunner,
+                      timeout_ms: value === "" ? 0 : Number(value),
+                    }),
+                  )
+                }
+              />
+              <FieldLabel label="Max Memory Bytes" />
+              <InlineInput
+                value={String(codeRunner.max_memory_bytes)}
+                placeholder="16777216"
+                onChange={(value) =>
+                  onUpdateNode(
+                    updateCodeRunnerConfig(node, {
+                      ...codeRunner,
+                      max_memory_bytes: value === "" ? 0 : Number(value),
+                    }),
+                  )
+                }
+                onCommit={(value) =>
+                  onUpdateNode(
+                    updateCodeRunnerConfig(node, {
+                      ...codeRunner,
+                      max_memory_bytes: value === "" ? 0 : Number(value),
+                    }),
+                  )
+                }
+              />
+            </div>
+          </InspectorSection>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-zinc-100 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 items-center justify-center rounded-full border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:text-zinc-950"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InspectorSection({
   id,
   title,
@@ -2254,6 +2472,22 @@ function createNode(
           fallback_node_id: null,
         },
       };
+    case "code_runner":
+      return {
+        ...base,
+        code_runner: {
+          language: "javascript",
+          timeout_ms: 20,
+          max_memory_bytes: 16_777_216,
+          code: [
+            "export function run(input) {",
+            "  return {",
+            '    logs: [{ level: "info", message: "code runner executed" }],',
+            "  };",
+            "}",
+          ].join("\n"),
+        },
+      };
     case "note":
       return { ...base, note_node: { text: "" } };
     default:
@@ -2603,6 +2837,26 @@ function validateGraph(
       }
     }
 
+    if (node.type === "code_runner") {
+      const codeRunner = node.code_runner;
+      if (!codeRunner) {
+        issues.push("Code runner config is required.");
+      } else {
+        if (codeRunner.language !== "javascript") {
+          issues.push("Only JavaScript is supported.");
+        }
+        if (!codeRunner.code.trim()) {
+          issues.push("Code is required.");
+        }
+        if (codeRunner.timeout_ms <= 0) {
+          issues.push("Timeout must be greater than zero.");
+        }
+        if (codeRunner.max_memory_bytes <= 0) {
+          issues.push("Memory limit must be greater than zero.");
+        }
+      }
+    }
+
     if (node.type !== "note" && issues.length > 0) {
       nodeIssues[node.id] = issues;
     }
@@ -2648,6 +2902,8 @@ function labelForType(type: RuleGraphNodeType) {
       return "Wasm Plugin";
     case "wasm_match":
       return "Wasm Match";
+    case "code_runner":
+      return "Code Runner";
     case "note":
       return "Note";
     case "end":
@@ -2731,6 +2987,65 @@ function describeWasmPlugin(
   return `Runs the ${pluginId} wasm plugin as a workflow step.`;
 }
 
+function isCodeRunnerNodeType(type: RuleGraphNodeType) {
+  return type === "code_runner";
+}
+
+function getCodeRunnerConfig(node: RuleGraphNode) {
+  return isCodeRunnerNodeType(node.type) ? node.code_runner ?? null : null;
+}
+
+function updateCodeRunnerConfig(
+  node: RuleGraphNode,
+  config: NonNullable<RuleGraphNode["code_runner"]>,
+): RuleGraphNode {
+  if (!isCodeRunnerNodeType(node.type)) {
+    return node;
+  }
+
+  return {
+    ...node,
+    code_runner: config,
+  };
+}
+
+function describeCodeRunner(node: RuleGraphNode) {
+  const config = getCodeRunnerConfig(node);
+  const language = config?.language ?? "javascript";
+
+  if (language !== "javascript") {
+    return "Runs a script to normalize request data before routing.";
+  }
+
+  return "Run JavaScript to normalize request data, rewrite fields, and choose the next port.";
+}
+
+function formatMemoryBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1 && Number.isInteger(mb)) {
+    return `${mb} MB`;
+  }
+
+  if (mb >= 1) {
+    return `${mb.toFixed(1)} MB`;
+  }
+
+  const kb = bytes / 1024;
+  if (kb >= 1 && Number.isInteger(kb)) {
+    return `${kb} KB`;
+  }
+
+  if (kb >= 1) {
+    return `${kb.toFixed(1)} KB`;
+  }
+
+  return `${bytes} B`;
+}
+
 function shortLabelForType(type: RuleGraphNodeType) {
   switch (type) {
     case "condition":
@@ -2757,6 +3072,8 @@ function shortLabelForType(type: RuleGraphNodeType) {
       return "Wasm";
     case "wasm_match":
       return "Wasm";
+    case "code_runner":
+      return "Code";
     case "note":
       return "Note";
     case "end":
@@ -2953,6 +3270,18 @@ function toneForNodeType(type: RuleGraphNodeType): NodeTone {
         handle: "#0284c7",
         edge: "#0284c7",
       };
+    case "code_runner":
+      return {
+        cardBorder: "border-emerald-300",
+        cardBg: "bg-emerald-100/92",
+        chipBg: "bg-emerald-200",
+        chipText: "text-emerald-950",
+        icon: "text-emerald-700",
+        libraryButton: "border-emerald-300 text-emerald-800 hover:border-emerald-500 hover:text-emerald-950",
+        minimap: "#10b981",
+        handle: "#10b981",
+        edge: "#10b981",
+      };
     case "end":
       return {
         cardBorder: "border-slate-300",
@@ -3009,6 +3338,8 @@ function iconForLibraryNode(type: RuleGraphNodeType) {
       return <Puzzle className={iconClass} />;
     case "wasm_match":
       return <Puzzle className={iconClass} />;
+    case "code_runner":
+      return <FileCode2 className={iconClass} />;
     case "note":
       return <FileText className={iconClass} />;
     case "end":
