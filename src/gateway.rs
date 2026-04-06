@@ -1760,11 +1760,16 @@ mod tests {
     use super::{
         PluginNodeRuntime, RequestResolution, RuntimeContextPatchOp, RuntimeExecuteInput,
         RuntimeExecuteOutput, execute_rule_graph, plugin_workspace_root,
-        resolve_plugin_network_policy, resolve_plugin_preopens, socket_addr_allowed,
+        resolve_plugin_network_policy, resolve_plugin_preopens, resolve_request,
+        socket_addr_allowed,
     };
-    use crate::config::{GatewayConfig, WasmCapability, WasmPluginNodeConfig, parse_config};
+    use crate::config::{
+        GatewayConfig, LoadedWorkflowSet, ProviderConfig, WasmCapability, WasmPluginNodeConfig,
+        WorkflowFileConfig, WorkflowIndexEntry, parse_config,
+    };
     use crate::wasm_plugins::{PluginRegistry, load_plugin_registry};
     use axum::http::{HeaderMap, Method, Uri};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
@@ -1939,6 +1944,45 @@ target = "plugin"
             .collect()
     }
 
+    fn graph_with_route_provider(provider_id: &str) -> GatewayConfig {
+        let mut config = parse_graph_config(
+            "",
+            r#"
+[[rule_graph.nodes]]
+id = "provider"
+type = "route_provider"
+position = { x = 240.0, y = 0.0 }
+
+[rule_graph.nodes.route_provider]
+provider_id = "kimi"
+"#,
+            r#"
+[[rule_graph.edges]]
+id = "edge-plugin-provider"
+source = "plugin"
+source_handle = "default"
+target = "provider"
+
+[[rule_graph.edges]]
+id = "edge-provider-end"
+source = "provider"
+target = "end"
+"#,
+        );
+        config
+            .providers
+            .iter_mut()
+            .for_each(|provider| provider.id = provider_id.to_string());
+        if let Some(graph) = config.rule_graph.as_mut() {
+            for node in &mut graph.nodes {
+                if let Some(route_provider) = node.route_provider.as_mut() {
+                    route_provider.provider_id = provider_id.to_string();
+                }
+            }
+        }
+        config
+    }
+
     #[test]
     fn executes_wasm_plugin_node_that_sets_context_and_chooses_next_port() {
         let config = parse_graph_config(
@@ -2014,6 +2058,88 @@ target = "end"
 
         assert_eq!(resolution.provider.id, "kimi");
         assert_eq!(header_values(&resolution, "x-intent"), vec!["code"]);
+        assert_eq!(runtime.calls(), 1);
+    }
+
+    #[test]
+    fn executes_only_active_workflow() {
+        let active_config = graph_with_route_provider("active-provider");
+        let inactive_config = graph_with_route_provider("inactive-provider");
+        let mut providers_config = active_config.clone();
+        providers_config.providers = vec![
+            ProviderConfig {
+                id: "active-provider".to_string(),
+                name: "Active Provider".to_string(),
+                base_url: "https://active.example.com".to_string(),
+                default_headers: Vec::new(),
+            },
+            ProviderConfig {
+                id: "inactive-provider".to_string(),
+                name: "Inactive Provider".to_string(),
+                base_url: "https://inactive.example.com".to_string(),
+                default_headers: Vec::new(),
+            },
+        ];
+        providers_config.rule_graph = None;
+
+        let active_workflow = active_config.rule_graph.expect("active graph should exist");
+        let inactive_workflow = inactive_config
+            .rule_graph
+            .expect("inactive graph should exist");
+        let mut workflow_store = LoadedWorkflowSet::default();
+        workflow_store.summaries = vec![
+            WorkflowIndexEntry {
+                id: "active".to_string(),
+                name: "Active".to_string(),
+                file: "active.toml".to_string(),
+                description: None,
+            },
+            WorkflowIndexEntry {
+                id: "inactive".to_string(),
+                name: "Inactive".to_string(),
+                file: "inactive.toml".to_string(),
+                description: None,
+            },
+        ];
+        workflow_store.by_id = BTreeMap::from([
+            (
+                "active".to_string(),
+                WorkflowFileConfig {
+                    workflow: active_workflow,
+                },
+            ),
+            (
+                "inactive".to_string(),
+                WorkflowFileConfig {
+                    workflow: inactive_workflow,
+                },
+            ),
+        ]);
+        workflow_store.active_workflow_id = Some("active".to_string());
+        let registry = load_test_registry(&["default"], &[]);
+        let runtime = FakePluginRuntime::succeeds(RuntimeExecuteOutput {
+            next_port: Some("default".to_string()),
+            ..RuntimeExecuteOutput::default()
+        });
+        let method = Method::POST;
+        let uri = "/v1/chat/completions"
+            .parse::<Uri>()
+            .expect("path should parse");
+        let headers = HeaderMap::new();
+
+        let resolution = resolve_request(
+            &providers_config,
+            &workflow_store,
+            &registry,
+            &runtime,
+            &method,
+            &uri,
+            &headers,
+        )
+        .expect("request resolution should succeed")
+        .expect("active workflow should resolve");
+
+        assert_eq!(resolution.provider.id, "active-provider");
         assert_eq!(runtime.calls(), 1);
     }
 
