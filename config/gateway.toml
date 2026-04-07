@@ -1,57 +1,15 @@
 listen = "127.0.0.1:9001"
 admin_listen = "127.0.0.1:9002"
 default_secret_env = "PROXY_SECRET"
+providers = []
+models = []
+routes = []
+header_rules = []
 workflows_dir = "workflows"
-active_workflow_id = "tsttest"
-
-[[providers]]
-id = "kimi"
-name = "Kimi"
-base_url = "https://api.kimi.com"
-
-[[providers.default_headers]]
-name = "Authorization"
-value = "Bearer replace-me"
-
-[[providers.default_headers]]
-name = "User-Agent"
-value = "proxy-tools/0.1"
-
-[[models]]
-id = "kimi-k2"
-name = "Kimi K2"
-provider_id = "kimi"
-description = "Default Kimi model route"
-
-[[routes]]
-id = "chat-default"
-priority = 100
-enabled = true
-matcher = 'path.startsWith("/v1/chat/completions") && method == "POST"'
-provider_id = "kimi"
-model_id = "kimi-k2"
-path_rewrite = "/coding/v1/chat/completions"
-
-[[header_rules]]
-id = "inject-model-header"
-enabled = true
-scope = "model"
-target_id = "kimi-k2"
-when = 'path.startsWith("/v1/")'
-
-[[header_rules.actions]]
-type = "set"
-name = "X-Model"
-value = "${model.id}"
+active_workflow_id = "111"
 
 [[workflows]]
-id = "default"
-name = "Default Workflow"
-file = "default.toml"
-description = "Migrated from legacy rule_graph"
-
-[[workflows]]
-id = "tsttest"
-name = "tsttest"
-file = "tsttest.toml"
-description = "tsttest"
+id = "111"
+name = "111"
+file = "111.toml"
+description = "11"
