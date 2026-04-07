@@ -61,6 +61,7 @@ import {
   type RuleGraphNodeType,
   type WasmCapability,
   type WasmPluginConfigField,
+  type WasmPluginCategory,
   type WasmPluginIcon,
   type WasmPluginManifestSummary,
   type WasmPluginTone,
@@ -190,7 +191,6 @@ export function RuleGraphEditor({
   const [codeRunnerConfigNodeId, setCodeRunnerConfigNodeId] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [viewportZoom, setViewportZoom] = useState(1);
-  const [panMode, setPanMode] = useState(false);
   const validation = useMemo(() => validateGraph(graph, config, pluginManifests), [graph, config, pluginManifests]);
   const providerOptions = useMemo(
     () => config.providers.map((provider) => ({ value: provider.id, label: provider.id })),
@@ -337,7 +337,6 @@ export function RuleGraphEditor({
             setSelectedNodeId(nextGraph.start_node_id);
           },
         },
-        selected: node.id === selectedNodeId,
         draggable: true,
       })),
     [
@@ -356,9 +355,19 @@ export function RuleGraphEditor({
 
   const [canvasNodes, setCanvasNodes] = useState<Array<Node<RuleCanvasNodeData>>>(flowNodes);
   const canvasNodesRef = useRef(canvasNodes);
+  const selectedNodeIds = useMemo(
+    () => canvasNodes.filter((node) => node.selected).map((node) => node.id),
+    [canvasNodes],
+  );
 
   useEffect(() => {
-    setCanvasNodes(flowNodes);
+    setCanvasNodes((current) => {
+      const selectedIds = new Set(current.filter((node) => node.selected).map((node) => node.id));
+      return flowNodes.map((node) => ({
+        ...node,
+        selected: selectedIds.has(node.id),
+      }));
+    });
   }, [flowNodes]);
 
   useEffect(() => {
@@ -442,9 +451,23 @@ export function RuleGraphEditor({
     }
   }, [graph.edges, selectedEdgeId]);
 
+  const deleteSelectedNodes = () => {
+    if (selectedNodeIds.length === 0) {
+      return;
+    }
+
+    let nextGraph = graphRef.current;
+    for (const nodeId of selectedNodeIds) {
+      nextGraph = removeNodeFromGraph(nextGraph, nodeId);
+    }
+    updateGraph(setConfig, nextGraph);
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!selectedEdgeId || (event.key !== "Delete" && event.key !== "Backspace")) {
+      if (event.key !== "Delete" && event.key !== "Backspace") {
         return;
       }
 
@@ -460,6 +483,15 @@ export function RuleGraphEditor({
       }
 
       event.preventDefault();
+      if (selectedNodeIds.length > 0) {
+        deleteSelectedNodes();
+        return;
+      }
+
+      if (!selectedEdgeId) {
+        return;
+      }
+
       updateGraph(setConfig, syncRouterTargetsWithEdges({
         ...graphRef.current,
         edges: graphRef.current.edges.filter((edge) => edge.id !== selectedEdgeId),
@@ -471,10 +503,18 @@ export function RuleGraphEditor({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [selectedEdgeId, setConfig]);
+  }, [selectedEdgeId, selectedNodeIds, setConfig]);
 
   const onNodesChange: OnNodesChange = (changes: NodeChange[]) => {
-    setCanvasNodes((current) => applyNodeChanges(changes, current));
+    setCanvasNodes((current) => {
+      const nextCanvasNodes = applyNodeChanges(changes, current);
+      const nextSelectedNodeIds = nextCanvasNodes.filter((node) => node.selected).map((node) => node.id);
+      setSelectedNodeId(nextSelectedNodeIds.length === 1 ? nextSelectedNodeIds[0] : null);
+      if (nextSelectedNodeIds.length > 0) {
+        setSelectedEdgeId(null);
+      }
+      return nextCanvasNodes;
+    });
 
     const removals = changes
       .filter((change): change is Extract<NodeChange, { type: "remove" }> => change.type === "remove")
@@ -487,17 +527,8 @@ export function RuleGraphEditor({
       }
       updateGraph(setConfig, nextGraph);
       if (selectedNodeId && removals.includes(selectedNodeId)) {
-        setSelectedNodeId(nextGraph.start_node_id);
+        setSelectedNodeId(null);
       }
-    }
-
-    const selected = changes.find(
-      (change): change is Extract<NodeChange, { type: "select" }> =>
-        change.type === "select" && change.selected,
-    );
-    if (selected) {
-      setSelectedNodeId(selected.id);
-      setSelectedEdgeId(null);
     }
   };
 
@@ -561,9 +592,11 @@ export function RuleGraphEditor({
             edges={flowEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            panOnDrag={panMode}
-            selectionOnDrag={!panMode}
-            nodesDraggable={!panMode}
+            panOnDrag
+            selectionOnDrag={false}
+            selectionKeyCode={["Meta", "Control"]}
+            multiSelectionKeyCode={["Meta", "Control"]}
+            nodesDraggable
             onInit={setFlowInstance}
             fitView
             minZoom={0.3}
@@ -581,7 +614,14 @@ export function RuleGraphEditor({
               if (!item) return;
               addNode(item, flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
             }}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+            onNodeClick={(event, node) => {
+              const multiSelect = event.shiftKey || event.metaKey || event.ctrlKey;
+              if (multiSelect) {
+                return;
+              }
+              setSelectedNodeId(node.id);
+              setSelectedEdgeId(null);
+            }}
             onEdgeClick={(_, edge) => {
               setSelectedNodeId(null);
               setSelectedEdgeId(edge.id);
@@ -618,7 +658,7 @@ export function RuleGraphEditor({
           <MiniMap
             pannable
             zoomable
-            className="!bottom-[88px] !right-4 !hidden !overflow-hidden !rounded-2xl !border !border-zinc-200 !bg-white/95 !shadow-sm xl:!block"
+            className="!bottom-4 !right-4 !hidden !overflow-hidden !rounded-2xl !border !border-zinc-200 !bg-white/95 !shadow-sm xl:!block"
             style={{ width: 164, height: 112 }}
             nodeColor={(node) => {
               const data = node.data as RuleCanvasNodeData;
@@ -681,6 +721,12 @@ export function RuleGraphEditor({
           {validationIssueCount > 0 ? (
             <Panel position="top-right" className="!m-4">
               <div className="flex items-center gap-2">
+                {selectedNodeIds.length > 1 ? (
+                  <BatchActionsBar
+                    count={selectedNodeIds.length}
+                    onDelete={deleteSelectedNodes}
+                  />
+                ) : null}
                 <div title={validationBadgeTitle}>
                   <span
                     className={[
@@ -701,36 +747,37 @@ export function RuleGraphEditor({
             </Panel>
           ) : (
             <Panel position="top-right" className="!m-4">
-              <CanvasToolbar
-                busy={busy}
-                onOpenSettings={onOpenSettings}
-                onReload={onReload}
-                onSave={onSave}
-              />
+              <div className="flex items-center gap-2">
+                {selectedNodeIds.length > 1 ? (
+                  <BatchActionsBar
+                    count={selectedNodeIds.length}
+                    onDelete={deleteSelectedNodes}
+                  />
+                ) : null}
+                <CanvasToolbar
+                  busy={busy}
+                  onOpenSettings={onOpenSettings}
+                  onReload={onReload}
+                  onSave={onSave}
+                />
+              </div>
             </Panel>
           )}
-          <Panel position="bottom-right" className="!m-4">
+          <Panel position="bottom-left" className="!m-4">
             <div className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white/95 px-2 py-2 shadow-sm backdrop-blur">
-              <button
-                type="button"
-                onClick={() => setPanMode((current) => !current)}
-                className={[
-                  "inline-flex h-8 w-8 items-center justify-center rounded-xl border transition",
-                  panMode
-                    ? "border-zinc-300 bg-zinc-100 text-zinc-900"
-                    : "border-transparent bg-white text-zinc-500 hover:border-zinc-200 hover:text-zinc-900",
-                ].join(" ")}
-                aria-label={panMode ? "Switch to select mode" : "Switch to pan mode"}
-                title={panMode ? "Pan mode" : "Select mode"}
+              <div
+                className="inline-flex h-8 items-center justify-center rounded-xl px-2 text-xs font-medium text-zinc-500"
+                title="Hold Command or Ctrl and drag to select"
               >
-                <Hand className="h-4 w-4" />
-              </button>
+                <Hand className="mr-1.5 h-4 w-4" />
+                Pan
+              </div>
               <button
                 type="button"
                 onClick={() => {
                   void flowInstance?.zoomTo(1, { duration: 220 });
                 }}
-                className="inline-flex min-w-[58px] items-center justify-center rounded-xl border border-transparent px-2 text-center text-sm font-medium tabular-nums text-zinc-700 transition hover:border-zinc-200 hover:bg-zinc-50"
+                className="inline-flex min-w-[64px] items-center justify-center rounded-xl border border-transparent px-2 text-sm font-medium tabular-nums text-zinc-700 transition hover:border-zinc-200 hover:bg-zinc-50"
                 aria-label="Reset zoom to 100%"
                 title="Reset zoom to 100%"
               >
@@ -748,6 +795,9 @@ export function RuleGraphEditor({
                 <Expand className="h-4 w-4" />
               </button>
             </div>
+          </Panel>
+          <Panel position="bottom-right" className="!m-4">
+            <div className="pointer-events-none h-0 w-0" />
           </Panel>
           </ReactFlow>
         </div>
@@ -839,6 +889,31 @@ function CanvasToolbar({
   );
 }
 
+function BatchActionsBar({
+  count,
+  onDelete,
+}: {
+  count: number;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white/95 px-2 py-1.5 shadow-sm backdrop-blur">
+      <div className="px-2 text-xs font-medium text-zinc-600">
+        {count} selected
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-zinc-500 transition hover:bg-rose-50 hover:text-rose-700"
+        aria-label="Delete selected nodes"
+        title="Delete selected nodes"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProps<RuleCanvasNodeData>) {
   const [draft, setDraft] = useState<RuleGraphNode>(data.node);
   const [isEditingNote, setIsEditingNote] = useState(false);
@@ -880,6 +955,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
       : tone.cardBorder;
   const bgTone = tone.cardBg;
   const isNoteNode = data.nodeType === "note";
+  const isTerminalNode = data.nodeType === "start" || data.nodeType === "end";
 
   const commitNode = (nextNode: RuleGraphNode) => {
     setDraft(nextNode);
@@ -888,7 +964,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
   return (
     <>
-      {data.nodeType === "note" ? null : (
+      {data.nodeType === "note" || data.nodeType === "start" ? null : (
         <Handle
           type="target"
           position={Position.Left}
@@ -996,6 +1072,53 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
         />
       ) : null}
 
+      {isTerminalNode ? (
+        <div
+          className={[
+            "min-w-[160px] rounded-[20px] border px-4 py-3 shadow-sm transition",
+            borderTone,
+            selected ? "ring-1 ring-zinc-300 shadow-md" : "",
+            data.nodeType === "start" ? "bg-emerald-50" : "border-zinc-800 bg-zinc-900",
+          ].join(" ")}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div
+                className={[
+                  "flex h-9 w-9 items-center justify-center rounded-2xl",
+                  data.nodeType === "start" ? "bg-white text-emerald-700" : "bg-white/10 text-white",
+                ].join(" ")}
+              >
+                {icon}
+              </div>
+              <div className="min-w-0">
+                <div
+                  className={[
+                    "text-[10px] font-semibold uppercase tracking-[0.16em]",
+                    data.nodeType === "start" ? "text-emerald-700/80" : "text-white/55",
+                  ].join(" ")}
+                >
+                  {data.nodeType === "start" ? "Entry" : "Exit"}
+                </div>
+                <div
+                  className={[
+                    "mt-1 truncate text-sm font-semibold",
+                    data.nodeType === "start" ? "text-zinc-950" : "text-white",
+                  ].join(" ")}
+                >
+                  {labelForNode(draft, data.pluginManifest)}
+                </div>
+              </div>
+            </div>
+            <div
+              className={[
+                "h-2.5 w-2.5 rounded-full",
+                data.nodeType === "start" ? "bg-emerald-500" : "bg-white/70",
+              ].join(" ")}
+            />
+          </div>
+        </div>
+      ) : (
       <div
         className={[
           "min-w-[250px] max-w-[300px] rounded-2xl border px-4 py-3 shadow-sm transition",
@@ -1032,7 +1155,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
               <span className="truncate">{labelForNode(draft, data.pluginManifest)}</span>
             </div>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1">
+          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5">
             {data.nodeType === "code_runner" ? (
               <button
                 type="button"
@@ -1040,11 +1163,11 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   data.onOpenCodeRunnerConfig();
                 }}
-                className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-900"
+                className="nodrag nopan inline-flex h-6 w-6 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-900"
                 aria-label="Configure code runner"
                 title="Configure code runner"
               >
-                <FileCode2 className="h-3.5 w-3.5" />
+                <FileCode2 className="h-3 w-3" />
               </button>
             ) : data.nodeType === "wasm_plugin" || data.nodeType === "match" ? (
               <>
@@ -1054,22 +1177,22 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                     event.stopPropagation();
                     data.onOpenWasmConfig();
                   }}
-                  className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-900"
+                  className="nodrag nopan inline-flex h-6 w-6 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-900"
                   aria-label="Configure plugin permissions"
                   title="Configure permissions"
                 >
-                  <Puzzle className="h-3.5 w-3.5" />
+                  <Puzzle className="h-3 w-3" />
                 </button>
                 <div className="group relative">
                   <button
                     type="button"
                     tabIndex={-1}
                     onClick={(event) => event.preventDefault()}
-                    className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-700"
+                    className="nodrag nopan inline-flex h-6 w-6 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-700"
                     aria-label="Show plugin details"
                     title="Plugin details"
                   >
-                    <CircleHelp className="h-3.5 w-3.5" />
+                    <CircleHelp className="h-3 w-3" />
                   </button>
                   <div className="pointer-events-none absolute right-0 top-[calc(100%+10px)] z-30 hidden w-64 rounded-xl border border-zinc-200 bg-white p-3 text-left shadow-lg group-hover:block">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
@@ -1118,7 +1241,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                 </div>
               </>
             ) : (
-              <div className={`inline-flex h-7 w-7 items-center justify-center rounded-md bg-white shadow-sm ${tone.icon}`}>{icon}</div>
+              <div className={`inline-flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm ${tone.icon}`}>{icon}</div>
             )}
             {selected && draft.type !== "start" ? (
               <button
@@ -1127,9 +1250,9 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   data.onDeleteNode();
                 }}
-                className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-rose-600"
+                className="nodrag nopan inline-flex h-6 w-6 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-rose-600"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-3 w-3" />
               </button>
             ) : null}
           </div>
@@ -1840,6 +1963,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
           </div>
         ) : null}
       </div>
+      )}
     </>
   );
 });
@@ -3408,99 +3532,23 @@ function shortLabelForPlugin(name: string) {
 }
 
 function toneForManifestTone(tone: WasmPluginTone | null | undefined): NodeTone | null {
-  const neutralCard = {
-    cardBorder: "border-zinc-200",
-    cardBg: "bg-white",
-  };
   switch (tone) {
     case "slate":
-      return {
-        ...neutralCard,
-        chipBg: "bg-slate-100",
-        chipText: "text-slate-700",
-        icon: "text-slate-700",
-        libraryButton: "border-zinc-200 bg-white text-slate-700 hover:border-zinc-300 hover:text-slate-950",
-        minimap: "#64748b",
-        handle: "#64748b",
-        edge: "#64748b",
-      };
+      return tonePreset("bg-slate-50", "border-slate-200", "bg-slate-100", "text-slate-700", "text-slate-700", "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:text-slate-950", "#64748b");
     case "blue":
-      return {
-        ...neutralCard,
-        chipBg: "bg-blue-50",
-        chipText: "text-blue-700",
-        icon: "text-blue-700",
-        libraryButton: "border-zinc-200 bg-white text-blue-700 hover:border-zinc-300 hover:text-blue-950",
-        minimap: "#2563eb",
-        handle: "#2563eb",
-        edge: "#2563eb",
-      };
+      return tonePreset("bg-blue-50", "border-blue-200", "bg-blue-100", "text-blue-700", "text-blue-700", "border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-300 hover:text-blue-950", "#2563eb");
     case "sky":
-      return {
-        ...neutralCard,
-        chipBg: "bg-sky-50",
-        chipText: "text-sky-700",
-        icon: "text-sky-700",
-        libraryButton: "border-zinc-200 bg-white text-sky-700 hover:border-zinc-300 hover:text-sky-950",
-        minimap: "#0284c7",
-        handle: "#0284c7",
-        edge: "#0284c7",
-      };
+      return tonePreset("bg-sky-50", "border-sky-200", "bg-sky-100", "text-sky-700", "text-sky-700", "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:text-sky-950", "#0284c7");
     case "teal":
-      return {
-        ...neutralCard,
-        chipBg: "bg-teal-50",
-        chipText: "text-teal-700",
-        icon: "text-teal-700",
-        libraryButton: "border-zinc-200 bg-white text-teal-700 hover:border-zinc-300 hover:text-teal-950",
-        minimap: "#0f766e",
-        handle: "#0f766e",
-        edge: "#0f766e",
-      };
+      return tonePreset("bg-teal-50", "border-teal-200", "bg-teal-100", "text-teal-700", "text-teal-700", "border-teal-200 bg-teal-50 text-teal-700 hover:border-teal-300 hover:text-teal-950", "#0f766e");
     case "emerald":
-      return {
-        ...neutralCard,
-        chipBg: "bg-emerald-50",
-        chipText: "text-emerald-700",
-        icon: "text-emerald-700",
-        libraryButton: "border-zinc-200 bg-white text-emerald-700 hover:border-zinc-300 hover:text-emerald-950",
-        minimap: "#10b981",
-        handle: "#10b981",
-        edge: "#10b981",
-      };
+      return tonePreset("bg-emerald-50", "border-emerald-200", "bg-emerald-100", "text-emerald-700", "text-emerald-700", "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:text-emerald-950", "#10b981");
     case "amber":
-      return {
-        ...neutralCard,
-        chipBg: "bg-amber-50",
-        chipText: "text-amber-700",
-        icon: "text-amber-700",
-        libraryButton: "border-zinc-200 bg-white text-amber-700 hover:border-zinc-300 hover:text-amber-950",
-        minimap: "#d97706",
-        handle: "#d97706",
-        edge: "#d97706",
-      };
+      return tonePreset("bg-amber-50", "border-amber-200", "bg-amber-100", "text-amber-700", "text-amber-700", "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:text-amber-950", "#d97706");
     case "rose":
-      return {
-        ...neutralCard,
-        chipBg: "bg-rose-50",
-        chipText: "text-rose-700",
-        icon: "text-rose-700",
-        libraryButton: "border-zinc-200 bg-white text-rose-700 hover:border-zinc-300 hover:text-rose-950",
-        minimap: "#e11d48",
-        handle: "#e11d48",
-        edge: "#e11d48",
-      };
+      return tonePreset("bg-rose-50", "border-rose-200", "bg-rose-100", "text-rose-700", "text-rose-700", "border-rose-200 bg-rose-50 text-rose-700 hover:border-rose-300 hover:text-rose-950", "#e11d48");
     case "violet":
-      return {
-        ...neutralCard,
-        chipBg: "bg-violet-50",
-        chipText: "text-violet-700",
-        icon: "text-violet-700",
-        libraryButton: "border-zinc-200 bg-white text-violet-700 hover:border-zinc-300 hover:text-violet-950",
-        minimap: "#7c3aed",
-        handle: "#7c3aed",
-        edge: "#7c3aed",
-      };
+      return tonePreset("bg-violet-50", "border-violet-200", "bg-violet-100", "text-violet-700", "text-violet-700", "border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:text-violet-950", "#7c3aed");
     default:
       return null;
   }
@@ -3511,7 +3559,8 @@ function toneForWasmAwareType(
   pluginManifest?: WasmPluginManifestSummary | null,
 ): NodeTone {
   if (type === "wasm_plugin" || type === "match") {
-    return toneForManifestTone(pluginManifest?.ui.tone) ?? toneForNodeType(type);
+    const categoryTone = toneForPluginCategory(pluginManifest?.ui.category);
+    return toneForManifestTone(pluginManifest?.ui.tone) ?? categoryTone ?? toneForNodeType(type);
   }
   return toneForNodeType(type);
 }
@@ -3537,211 +3586,80 @@ function toneForGraphNode(
 }
 
 function toneForNodeType(type: RuleGraphNodeType): NodeTone {
-  const neutralCard = {
-    cardBorder: "border-zinc-200",
-    cardBg: "bg-white",
-  };
   switch (type) {
     case "start":
-      return {
-        ...neutralCard,
-        chipBg: "bg-zinc-900",
-        chipText: "text-white",
-        icon: "text-zinc-700",
-        libraryButton: "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:text-zinc-900",
-        minimap: "#111827",
-        handle: "#111827",
-        edge: "#111827",
-      };
+      return tonePreset("bg-emerald-50", "border-emerald-200", "bg-emerald-100", "text-emerald-700", "text-emerald-700", "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:text-emerald-950", "#10b981");
     case "condition":
-      return {
-        ...neutralCard,
-        chipBg: "bg-violet-50",
-        chipText: "text-violet-700",
-        icon: "text-violet-600",
-        libraryButton: "border-zinc-200 bg-white text-violet-700 hover:border-zinc-300 hover:text-violet-900",
-        minimap: "#7c3aed",
-        handle: "#7c3aed",
-        edge: "#7c3aed",
-      };
+      return tonePreset("bg-sky-50", "border-sky-200", "bg-sky-100", "text-sky-700", "text-sky-700", "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:text-sky-950", "#0284c7");
     case "select_model":
-      return {
-        ...neutralCard,
-        chipBg: "bg-blue-50",
-        chipText: "text-blue-700",
-        icon: "text-blue-600",
-        libraryButton: "border-zinc-200 bg-white text-blue-700 hover:border-zinc-300 hover:text-blue-900",
-        minimap: "#2563eb",
-        handle: "#2563eb",
-        edge: "#2563eb",
-      };
+      return tonePreset("bg-amber-50", "border-amber-200", "bg-amber-100", "text-amber-700", "text-amber-700", "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:text-amber-950", "#d97706");
     case "route_provider":
-      return {
-        ...neutralCard,
-        chipBg: "bg-cyan-50",
-        chipText: "text-cyan-800",
-        icon: "text-cyan-700",
-        libraryButton: "border-zinc-200 bg-white text-cyan-800 hover:border-zinc-300 hover:text-cyan-950",
-        minimap: "#0ea5e9",
-        handle: "#0ea5e9",
-        edge: "#0ea5e9",
-      };
+      return tonePreset("bg-amber-50", "border-amber-200", "bg-amber-100", "text-amber-700", "text-amber-700", "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:text-amber-950", "#d97706");
     case "rewrite_path":
-      return {
-        ...neutralCard,
-        chipBg: "bg-amber-50",
-        chipText: "text-amber-700",
-        icon: "text-amber-600",
-        libraryButton: "border-zinc-200 bg-white text-amber-700 hover:border-zinc-300 hover:text-amber-900",
-        minimap: "#d97706",
-        handle: "#d97706",
-        edge: "#d97706",
-      };
+      return tonePreset("bg-emerald-50", "border-emerald-200", "bg-emerald-100", "text-emerald-700", "text-emerald-700", "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:text-emerald-950", "#10b981");
     case "set_context":
-      return {
-        ...neutralCard,
-        chipBg: "bg-fuchsia-50",
-        chipText: "text-fuchsia-700",
-        icon: "text-fuchsia-700",
-        libraryButton: "border-zinc-200 bg-white text-fuchsia-800 hover:border-zinc-300 hover:text-fuchsia-950",
-        minimap: "#c026d3",
-        handle: "#c026d3",
-        edge: "#c026d3",
-      };
+      return tonePreset("bg-emerald-50", "border-emerald-200", "bg-emerald-100", "text-emerald-700", "text-emerald-700", "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:text-emerald-950", "#10b981");
     case "router":
-      return {
-        ...neutralCard,
-        chipBg: "bg-indigo-50",
-        chipText: "text-indigo-700",
-        icon: "text-indigo-700",
-        libraryButton: "border-zinc-200 bg-white text-indigo-800 hover:border-zinc-300 hover:text-indigo-950",
-        minimap: "#4f46e5",
-        handle: "#4f46e5",
-        edge: "#4f46e5",
-      };
+      return tonePreset("bg-sky-50", "border-sky-200", "bg-sky-100", "text-sky-700", "text-sky-700", "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:text-sky-950", "#0284c7");
     case "log":
-      return {
-        ...neutralCard,
-        chipBg: "bg-cyan-50",
-        chipText: "text-cyan-800",
-        icon: "text-cyan-700",
-        libraryButton: "border-zinc-200 bg-white text-cyan-800 hover:border-zinc-300 hover:text-cyan-950",
-        minimap: "#0891b2",
-        handle: "#0891b2",
-        edge: "#0891b2",
-      };
+      return tonePreset("bg-slate-50", "border-slate-200", "bg-slate-100", "text-slate-700", "text-slate-700", "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:text-slate-950", "#64748b");
     case "set_header":
-      return {
-        ...neutralCard,
-        chipBg: "bg-emerald-50",
-        chipText: "text-emerald-700",
-        icon: "text-emerald-600",
-        libraryButton: "border-zinc-200 bg-white text-emerald-700 hover:border-zinc-300 hover:text-emerald-900",
-        minimap: "#059669",
-        handle: "#059669",
-        edge: "#059669",
-      };
     case "set_header_if_absent":
-      return {
-        ...neutralCard,
-        chipBg: "bg-lime-50",
-        chipText: "text-lime-700",
-        icon: "text-lime-600",
-        libraryButton: "border-zinc-200 bg-white text-lime-700 hover:border-zinc-300 hover:text-lime-900",
-        minimap: "#65a30d",
-        handle: "#65a30d",
-        edge: "#65a30d",
-      };
     case "remove_header":
-      return {
-        ...neutralCard,
-        chipBg: "bg-rose-50",
-        chipText: "text-rose-700",
-        icon: "text-rose-600",
-        libraryButton: "border-zinc-200 bg-white text-rose-700 hover:border-zinc-300 hover:text-rose-900",
-        minimap: "#e11d48",
-        handle: "#e11d48",
-        edge: "#e11d48",
-      };
     case "copy_header":
-      return {
-        ...neutralCard,
-        chipBg: "bg-orange-50",
-        chipText: "text-orange-700",
-        icon: "text-orange-600",
-        libraryButton: "border-zinc-200 bg-white text-orange-700 hover:border-zinc-300 hover:text-orange-900",
-        minimap: "#ea580c",
-        handle: "#ea580c",
-        edge: "#ea580c",
-      };
+      return tonePreset("bg-emerald-50", "border-emerald-200", "bg-emerald-100", "text-emerald-700", "text-emerald-700", "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:text-emerald-950", "#10b981");
     case "note":
-      return {
-        cardBorder: "border-amber-200",
-        cardBg: "bg-amber-50",
-        chipBg: "bg-amber-100",
-        chipText: "text-amber-900",
-        icon: "text-amber-700",
-        libraryButton: "border-zinc-200 bg-white text-amber-800 hover:border-zinc-300 hover:text-amber-950",
-        minimap: "#f59e0b",
-        handle: "#f59e0b",
-        edge: "#f59e0b",
-      };
+      return tonePreset("bg-amber-50", "border-amber-200", "bg-amber-100", "text-amber-800", "text-amber-800", "border-amber-200 bg-amber-50 text-amber-800 hover:border-amber-300 hover:text-amber-950", "#d97706");
     case "wasm_plugin":
-      return {
-        ...neutralCard,
-        chipBg: "bg-teal-50",
-        chipText: "text-teal-700",
-        icon: "text-teal-700",
-        libraryButton: "border-zinc-200 bg-white text-teal-800 hover:border-zinc-300 hover:text-teal-950",
-        minimap: "#0f766e",
-        handle: "#0f766e",
-        edge: "#0f766e",
-      };
+      return tonePreset("bg-violet-50", "border-violet-200", "bg-violet-100", "text-violet-700", "text-violet-700", "border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:text-violet-950", "#7c3aed");
     case "match":
-      return {
-        ...neutralCard,
-        chipBg: "bg-sky-50",
-        chipText: "text-sky-700",
-        icon: "text-sky-700",
-        libraryButton: "border-zinc-200 bg-white text-sky-800 hover:border-zinc-300 hover:text-sky-950",
-        minimap: "#0284c7",
-        handle: "#0284c7",
-        edge: "#0284c7",
-      };
+      return tonePreset("bg-sky-50", "border-sky-200", "bg-sky-100", "text-sky-700", "text-sky-700", "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:text-sky-950", "#0284c7");
     case "code_runner":
-      return {
-        ...neutralCard,
-        chipBg: "bg-emerald-50",
-        chipText: "text-emerald-700",
-        icon: "text-emerald-700",
-        libraryButton: "border-zinc-200 bg-white text-emerald-800 hover:border-zinc-300 hover:text-emerald-950",
-        minimap: "#10b981",
-        handle: "#10b981",
-        edge: "#10b981",
-      };
+      return tonePreset("bg-violet-50", "border-violet-200", "bg-violet-100", "text-violet-700", "text-violet-700", "border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:text-violet-950", "#7c3aed");
     case "end":
-      return {
-        ...neutralCard,
-        chipBg: "bg-slate-100",
-        chipText: "text-slate-800",
-        icon: "text-slate-600",
-        libraryButton: "border-zinc-200 bg-white text-slate-700 hover:border-zinc-300 hover:text-slate-900",
-        minimap: "#475569",
-        handle: "#475569",
-        edge: "#475569",
-      };
+      return tonePreset("bg-slate-100", "border-slate-300", "bg-slate-200", "text-slate-700", "text-slate-700", "border-slate-300 bg-slate-100 text-slate-700 hover:border-slate-400 hover:text-slate-950", "#475569");
     default:
-      return {
-        ...neutralCard,
-        chipBg: "bg-zinc-100",
-        chipText: "text-zinc-900",
-        icon: "text-zinc-700",
-        libraryButton: "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:text-zinc-900",
-        minimap: "#71717a",
-        handle: "#71717a",
-        edge: "#71717a",
-      };
+      return tonePreset("bg-zinc-50", "border-zinc-200", "bg-zinc-100", "text-zinc-700", "text-zinc-700", "border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:text-zinc-900", "#71717a");
   }
+}
+
+function toneForPluginCategory(category: WasmPluginCategory | null | undefined): NodeTone | null {
+  switch (category) {
+    case "control":
+      return tonePreset("bg-sky-50", "border-sky-200", "bg-sky-100", "text-sky-700", "text-sky-700", "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:text-sky-950", "#0284c7");
+    case "transform":
+      return tonePreset("bg-emerald-50", "border-emerald-200", "bg-emerald-100", "text-emerald-700", "text-emerald-700", "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:text-emerald-950", "#10b981");
+    case "routing":
+      return tonePreset("bg-amber-50", "border-amber-200", "bg-amber-100", "text-amber-700", "text-amber-700", "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:text-amber-950", "#d97706");
+    case "policy":
+      return tonePreset("bg-violet-50", "border-violet-200", "bg-violet-100", "text-violet-700", "text-violet-700", "border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:text-violet-950", "#7c3aed");
+    case "utility":
+      return tonePreset("bg-slate-50", "border-slate-200", "bg-slate-100", "text-slate-700", "text-slate-700", "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:text-slate-950", "#64748b");
+    default:
+      return null;
+  }
+}
+
+function tonePreset(
+  _cardBg: string,
+  cardBorder: string,
+  chipBg: string,
+  chipText: string,
+  icon: string,
+  libraryButton: string,
+  color: string,
+): NodeTone {
+  return {
+    cardBorder,
+    cardBg: "bg-white",
+    chipBg,
+    chipText,
+    icon,
+    libraryButton,
+    minimap: color,
+    handle: color,
+    edge: color,
+  };
 }
 
 function iconForPluginIcon(icon: WasmPluginIcon | null | undefined) {
