@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use wasmtime::{component::Component, Config as WasmtimeConfig, Engine, Module};
+use wasmtime::{Config as WasmtimeConfig, Engine, Module, component::Component};
 
 type PluginResult<T> = Result<T, Box<dyn Error>>;
 
@@ -383,6 +383,50 @@ pub fn load_plugin_registry(path: &Path) -> PluginResult<PluginRegistry> {
     })
 }
 
+pub fn resolve_plugins_root(config_path: &Path) -> PluginResult<PathBuf> {
+    let canonical_config_path = fs::canonicalize(config_path)?;
+    let config_dir = canonical_config_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "config path '{}' does not have a parent directory",
+                canonical_config_path.display()
+            ),
+        )
+    })?;
+
+    let mut candidates = vec![config_dir.join("plugins")];
+    if let Some(project_root) = config_dir.parent() {
+        let project_plugins = project_root.join("plugins");
+        if project_plugins != candidates[0] {
+            candidates.push(project_plugins);
+        }
+    }
+
+    let checked_locations = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+
+    for candidate in candidates {
+        if candidate.is_dir() {
+            return Ok(candidate);
+        }
+        if candidate.exists() {
+            return Err(invalid_data(format!(
+                "resolved plugins path '{}' exists but is not a directory",
+                candidate.display()
+            )));
+        }
+    }
+
+    Err(invalid_data(format!(
+        "could not resolve plugins directory for config '{}'; checked: {}",
+        canonical_config_path.display(),
+        checked_locations.join(", ")
+    )))
+}
+
 fn resolve_plugin_wasm_path(directory: &Path) -> PluginResult<PathBuf> {
     let nested_path = directory.join("wasm").join("plugin.wasm");
     if nested_path.is_file() {
@@ -598,8 +642,8 @@ fn default_config_schema_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        load_plugin_registry, parse_plugin_manifest, ManifestCapability, ManifestCategory,
-        ManifestIcon, ManifestTone, PluginRuntimeKind,
+        ManifestCapability, ManifestCategory, ManifestIcon, ManifestTone, PluginRuntimeKind,
+        load_plugin_registry, parse_plugin_manifest, resolve_plugins_root,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -693,6 +737,25 @@ tags = ["intent", "branch"]
                 .as_path()
         );
         assert_eq!(plugin.runtime_kind(), PluginRuntimeKind::Component);
+    }
+
+    #[test]
+    fn resolves_plugins_directory_from_project_root() {
+        let root = temp_dir("resolve-plugins");
+        let config_dir = root.join("config");
+        let plugins_dir = root.join("plugins");
+        let config_path = config_dir.join("gateway.toml");
+
+        fs::create_dir_all(&config_dir).expect("config dir should be creatable");
+        fs::create_dir_all(&plugins_dir).expect("plugins dir should be creatable");
+        fs::write(&config_path, "listen = \"127.0.0.1:3000\"\n")
+            .expect("config file should be writable");
+
+        let resolved = resolve_plugins_root(&config_path).expect("plugins root should resolve");
+        assert_eq!(
+            fs::canonicalize(&resolved).expect("resolved path should canonicalize"),
+            fs::canonicalize(&plugins_dir).expect("plugins dir should canonicalize")
+        );
     }
 
     #[test]

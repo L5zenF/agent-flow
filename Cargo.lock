@@ -695,8 +695,22 @@ name = "facade"
 version = "0.1.0"
 dependencies = [
  "application",
+ "axum",
+ "bytes",
+ "clap",
  "domain",
+ "http",
  "infrastructure",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wasmtime",
+ "wasmtime-wasi",
 ]
 
 [[package]]
@@ -1203,12 +1217,21 @@ name = "infrastructure"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "application",
+ "axum",
  "base64",
+ "bytes",
  "domain",
  "hkdf",
+ "http",
+ "reqwest",
  "serde",
+ "serde_json",
  "sha2",
  "toml 0.8.23",
+ "tracing",
+ "url",
+ "wasmtime",
 ]
 
 [[package]]
@@ -1532,29 +1555,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "proxy-tools"
-version = "0.1.0"
-dependencies = [
- "application",
- "axum",
- "bytes",
- "clap",
- "domain",
- "http",
- "infrastructure",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "url",
- "wasmtime",
- "wasmtime-wasi",
 ]
 
 [[package]]

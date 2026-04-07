@@ -3,10 +3,9 @@ members = [
     "crates/application",
     "crates/domain",
     "crates/facade",
-    "crates/gateway",
     "crates/infrastructure",
 ]
-default-members = ["crates/gateway"]
+default-members = ["crates/facade"]
 resolver = "2"
 
 [workspace.dependencies]

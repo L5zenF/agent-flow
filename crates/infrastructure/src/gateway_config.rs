@@ -14,7 +14,7 @@ use application::{
     RuleGraphNodeValidationInput, RuleGraphStructureInput, RuleScopeInput, WasmCapabilityInput,
     WorkflowIndexEntryInput, WorkflowValidationInput,
 };
-use infrastructure::atomic_store::write_toml_atomic;
+use crate::atomic_store::write_toml_atomic;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

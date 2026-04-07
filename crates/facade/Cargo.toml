@@ -3,8 +3,23 @@ name = "facade"
 version = "0.1.0"
 edition = "2024"
 publish = false
+default-run = "proxy-tools"
 
 [dependencies]
 application = { path = "../application" }
 domain = { path = "../domain" }
 infrastructure = { path = "../infrastructure" }
+axum.workspace = true
+bytes.workspace = true
+clap.workspace = true
+http.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
