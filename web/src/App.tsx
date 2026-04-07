@@ -833,7 +833,10 @@ function ProviderModelsSection({
           const providerModels = config.models.filter((model) => model.provider_id === provider.id);
 
           return (
-            <Card key={provider.id} className="rounded-[24px] border border-zinc-200 bg-white p-5 shadow-sm">
+            <Card
+              key={`provider-card-${providerIndex}`}
+              className="rounded-[24px] border border-zinc-200 bg-white p-5 shadow-sm"
+            >
               <SectionActions
                 title={provider.name || provider.id || `Provider ${providerIndex + 1}`}
                 onRemove={() =>
@@ -857,7 +860,7 @@ function ProviderModelsSection({
                 <div className="grid gap-3 md:grid-cols-2">
                   {providerFields.map((field) => (
                     <SchemaFieldControl
-                      key={`${provider.id}-${field.key}`}
+                      key={`provider-field-${providerIndex}-${field.key}`}
                       field={field}
                       value={(provider as Record<string, unknown>)[field.key]}
                       providerOptions={[]}
@@ -918,7 +921,7 @@ function ProviderModelsSection({
                       const absoluteModelIndex = config.models.findIndex((item) => item.id === model.id);
                       return (
                         <Card
-                          key={model.id}
+                          key={`provider-model-card-${providerIndex}-${modelIndex}`}
                           className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-4 shadow-none"
                         >
                           <SectionActions
@@ -933,7 +936,7 @@ function ProviderModelsSection({
                           <div className="grid gap-3 md:grid-cols-2">
                             {modelFields.map((field) => (
                               <SchemaFieldControl
-                                key={`${model.id}-${field.key}`}
+                                key={`provider-model-field-${absoluteModelIndex}-${field.key}`}
                                 field={field}
                                 value={(model as Record<string, unknown>)[field.key]}
                                 providerOptions={[]}
@@ -1020,7 +1023,7 @@ function ProvidersSection({
         <EmptyMiniState text="No providers configured." />
       ) : (
         config.providers.map((provider, providerIndex) => (
-          <Card key={provider.id} className="rounded-2xl border border-zinc-200">
+          <Card key={`providers-section-card-${providerIndex}`} className="rounded-2xl border border-zinc-200">
             <SectionActions
               title={provider.name || provider.id || `Provider ${providerIndex + 1}`}
               onRemove={() =>
@@ -1222,7 +1225,7 @@ function ModelsSection({
         <EmptyMiniState text="No models configured." />
       ) : (
         config.models.map((model, modelIndex) => (
-          <Card key={model.id} className="rounded-2xl border border-zinc-200">
+          <Card key={`models-section-card-${modelIndex}`} className="rounded-2xl border border-zinc-200">
             <SectionActions
               title={model.name || model.id || `Model ${modelIndex + 1}`}
               onRemove={() =>
@@ -1381,7 +1384,7 @@ function SchemaListSection({
         <EmptyMiniState text={section.empty_text ?? `No ${section.title.toLowerCase()} configured.`} />
       ) : (
         items.map((item, index) => (
-          <Card key={item.id} className="rounded-2xl border border-zinc-200">
+          <Card key={`${kind}-schema-card-${index}`} className="rounded-2xl border border-zinc-200">
             <SectionActions
               title={item.name || item.id || `${section.title} ${index + 1}`}
               onRemove={() => removeItem(index, item.id)}

@@ -1,0 +1,10 @@
+[package]
+name = "infrastructure"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+domain = { path = "../domain" }
+serde.workspace = true
+toml.workspace = true

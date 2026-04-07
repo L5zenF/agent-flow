@@ -1,13 +1,19 @@
 [package]
 name = "proxy-tools"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
-publish = false
+edition = "2021"
+default-run = "proxy-tools"
 
 [workspace]
+members = [
+    "crates/application",
+    "crates/domain",
+    "crates/facade",
+    "crates/infrastructure",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 aes-gcm = "0.10"
 axum = "0.8"
 base64 = "0.22"
@@ -26,3 +32,23 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 wasmtime = { version = "40.0.4", default-features = false, features = ["cache", "component-model", "cranelift", "runtime", "std"] }
 wasmtime-wasi = { version = "40.0.4", default-features = false, features = ["p1"] }
+
+[dependencies]
+aes-gcm.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+hkdf.workspace = true
+http.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true

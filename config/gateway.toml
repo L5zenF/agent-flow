@@ -1,15 +1,25 @@
 listen = "127.0.0.1:9001"
 admin_listen = "127.0.0.1:9002"
 default_secret_env = "PROXY_SECRET"
-providers = []
-models = []
 routes = []
 header_rules = []
 workflows_dir = "workflows"
-active_workflow_id = "111"
+active_workflow_id = "default"
+
+[[providers]]
+id = "glm-inner"
+name = "glm-inner"
+base_url = "https://test-api-gateway.glm.ai/v1"
+default_headers = []
+
+[[models]]
+id = "gpt-5.3-codex"
+name = "gpt-5.3-codex"
+provider_id = "glm-inner"
+description = "111"
 
 [[workflows]]
-id = "111"
-name = "111"
-file = "111.toml"
-description = "11"
+id = "default"
+name = "default"
+file = "default.toml"
+description = "default workflow"
