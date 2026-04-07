@@ -1,18 +1,22 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Json;
+use application::{
+    gateway_settings_schema, plan_create_workflow, reload_runtime_state, replace_config,
+    require_workflow, validate_candidate_config, SettingsSchema, WorkflowAdminError,
+    WorkflowEntryInput,
+};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::config::{
-    GatewayConfig, LoadedWorkflowSet, RuleGraphConfig, RuntimeState, WorkflowFileConfig,
-    WorkflowIndexEntry, load_runtime_state, normalize_legacy_rule_graph, parse_config,
-    resolve_workflow_path, runtime_state_from_config, save_config_atomic,
-    save_workflow_file_atomic,
+    load_runtime_state, normalize_legacy_rule_graph, parse_config, resolve_workflow_path,
+    runtime_state_from_config, save_config_atomic, save_workflow_file_atomic, GatewayConfig,
+    LoadedWorkflowSet, RuleGraphConfig, RuntimeState, WorkflowFileConfig, WorkflowIndexEntry,
 };
 use crate::wasm_plugins::{
     ManifestCapability, ManifestCategory, ManifestIcon, ManifestTone, PluginConfigSchema,
@@ -57,42 +61,6 @@ pub struct WorkflowSummary {
     pub is_active: bool,
     pub node_count: usize,
     pub edge_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SettingsSchema {
-    pub global: SettingsSchemaSection,
-    pub providers: SettingsSchemaSection,
-    pub models: SettingsSchemaSection,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SettingsSchemaSection {
-    pub key: String,
-    pub title: String,
-    pub description: String,
-    pub list_label: Option<String>,
-    pub add_label: Option<String>,
-    pub empty_text: Option<String>,
-    pub fields: Vec<SettingsSchemaField>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SettingsSchemaField {
-    pub key: String,
-    pub label: String,
-    #[serde(rename = "type")]
-    pub field_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub placeholder: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub help_text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub option_source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<Vec<SettingsSchemaField>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -158,126 +126,18 @@ pub async fn get_plugins(State(state): State<AdminState>) -> impl IntoResponse {
 }
 
 pub async fn get_settings_schema() -> Json<SettingsSchema> {
-    Json(SettingsSchema {
-        global: SettingsSchemaSection {
-            key: "global".to_string(),
-            title: "Global config".to_string(),
-            description:
-                "These values still use the live gateway config state and stay host-controlled."
-                    .to_string(),
-            list_label: None,
-            add_label: None,
-            empty_text: None,
-            fields: vec![
-                text_field("listen", "Listen"),
-                text_field("admin_listen", "Admin Listen"),
-                SettingsSchemaField {
-                    key: "default_secret_env".to_string(),
-                    label: "Default Secret Env".to_string(),
-                    field_type: "text".to_string(),
-                    required: None,
-                    placeholder: Some("PROXY_SECRET".to_string()),
-                    help_text: None,
-                    option_source: None,
-                    fields: None,
-                },
-            ],
-        },
-        providers: SettingsSchemaSection {
-            key: "providers".to_string(),
-            title: "Providers".to_string(),
-            description: "Manage upstream providers and their default headers.".to_string(),
-            list_label: Some("Providers".to_string()),
-            add_label: Some("Add Provider".to_string()),
-            empty_text: Some("No providers configured.".to_string()),
-            fields: vec![
-                text_field("id", "ID"),
-                text_field("name", "Name"),
-                SettingsSchemaField {
-                    key: "base_url".to_string(),
-                    label: "Base URL".to_string(),
-                    field_type: "text".to_string(),
-                    required: Some(true),
-                    placeholder: Some("https://example.com".to_string()),
-                    help_text: None,
-                    option_source: None,
-                    fields: None,
-                },
-                SettingsSchemaField {
-                    key: "default_headers".to_string(),
-                    label: "Default Headers".to_string(),
-                    field_type: "object_list".to_string(),
-                    required: None,
-                    placeholder: None,
-                    help_text: Some("Headers sent with every upstream request.".to_string()),
-                    option_source: None,
-                    fields: Some(vec![
-                        text_field("name", "Header"),
-                        text_field("value", "Value"),
-                        text_field("secret_env", "Secret Env"),
-                        SettingsSchemaField {
-                            key: "encrypted".to_string(),
-                            label: "Encrypted".to_string(),
-                            field_type: "boolean".to_string(),
-                            required: None,
-                            placeholder: None,
-                            help_text: None,
-                            option_source: None,
-                            fields: None,
-                        },
-                    ]),
-                },
-            ],
-        },
-        models: SettingsSchemaSection {
-            key: "models".to_string(),
-            title: "Models".to_string(),
-            description: "Attach models to providers through the shared config state.".to_string(),
-            list_label: Some("Models".to_string()),
-            add_label: Some("Add Model".to_string()),
-            empty_text: Some("No models configured.".to_string()),
-            fields: vec![
-                text_field("id", "ID"),
-                text_field("name", "Name"),
-                SettingsSchemaField {
-                    key: "provider_id".to_string(),
-                    label: "Provider".to_string(),
-                    field_type: "select".to_string(),
-                    required: Some(true),
-                    placeholder: None,
-                    help_text: None,
-                    option_source: Some("providers".to_string()),
-                    fields: None,
-                },
-                SettingsSchemaField {
-                    key: "description".to_string(),
-                    label: "Description".to_string(),
-                    field_type: "textarea".to_string(),
-                    required: None,
-                    placeholder: Some("Optional model description.".to_string()),
-                    help_text: None,
-                    option_source: None,
-                    fields: None,
-                },
-            ],
-        },
-    })
+    Json(gateway_settings_schema())
 }
 
 pub async fn validate_config_handler(
     State(state): State<AdminState>,
     Json(candidate): Json<GatewayConfig>,
 ) -> impl IntoResponse {
-    match toml::to_string(&candidate)
-        .map_err(|error| error.to_string())
-        .and_then(|raw| parse_config(&raw).map_err(|error| error.to_string()))
-        .and_then(|normalized| {
-            runtime_state_from_config(&state.config_path, normalized)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        }) {
+    match validate_candidate_config(&candidate, toml::to_string, parse_config, |normalized| {
+        runtime_state_from_config(&state.config_path, normalized).map(|_| ())
+    }) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     }
 }
 
@@ -285,27 +145,27 @@ pub async fn put_config(
     State(state): State<AdminState>,
     Json(candidate): Json<GatewayConfig>,
 ) -> impl IntoResponse {
-    let normalized = normalize_legacy_rule_graph(candidate);
-    let runtime_state = match runtime_state_from_config(&state.config_path, normalized.clone()) {
-        Ok(runtime_state) => runtime_state,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
-    };
-    match save_config_atomic(&state.config_path, &normalized).map_err(|error| error.to_string()) {
-        Ok(()) => {
-            *state.runtime_state.write().await = runtime_state;
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
-    }
-}
-
-pub async fn reload_config(State(state): State<AdminState>) -> impl IntoResponse {
-    match load_runtime_state(&state.config_path).map_err(|error| error.to_string()) {
+    match replace_config(
+        candidate,
+        normalize_legacy_rule_graph,
+        |normalized| runtime_state_from_config(&state.config_path, normalized.clone()),
+        |normalized| save_config_atomic(&state.config_path, normalized),
+    ) {
         Ok(runtime_state) => {
             *state.runtime_state.write().await = runtime_state;
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
+}
+
+pub async fn reload_config(State(state): State<AdminState>) -> impl IntoResponse {
+    match reload_runtime_state(|| load_runtime_state(&state.config_path)) {
+        Ok(runtime_state) => {
+            *state.runtime_state.write().await = runtime_state;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     }
 }
 
@@ -340,43 +200,18 @@ pub async fn create_workflow(
     State(state): State<AdminState>,
     Json(input): Json<CreateWorkflowRequest>,
 ) -> Result<(StatusCode, Json<WorkflowSummary>), (StatusCode, String)> {
-    let id = input.id.trim();
-    if id.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "workflow id cannot be empty".to_string(),
-        ));
-    }
-    let name = input.name.trim();
-    if name.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "workflow name cannot be empty".to_string(),
-        ));
-    }
-
     let mut runtime_state = state.runtime_state.write().await;
+    let plan = plan_create_workflow(
+        &to_application_workflow_entries(&runtime_state.config.workflows),
+        runtime_state.config.active_workflow_id.as_deref(),
+        &input.id,
+        &input.name,
+        input.description,
+    )
+    .map_err(workflow_admin_error)?;
     let mut next_config = runtime_state.config.clone();
-    if next_config
-        .workflows
-        .iter()
-        .any(|workflow| workflow.id == id)
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("workflow '{id}' already exists"),
-        ));
-    }
-
-    let workflow = WorkflowIndexEntry {
-        id: id.to_string(),
-        name: name.to_string(),
-        file: format!("{id}.toml"),
-        description: input.description.and_then(normalize_optional_text),
-    };
-    if next_config.active_workflow_id.is_none() {
-        next_config.active_workflow_id = Some(workflow.id.clone());
-    }
+    let workflow = from_application_workflow_entry(&plan.workflow);
+    next_config.active_workflow_id = plan.next_active_workflow_id;
     next_config.workflows.push(workflow.clone());
     ensure_active_workflow_file(&state.config_path, &runtime_state).map_err(invalid_request)?;
 
@@ -415,18 +250,12 @@ pub async fn put_workflow(
     Json(input): Json<WorkflowFileConfig>,
 ) -> Result<Json<WorkflowFileConfig>, (StatusCode, String)> {
     let mut runtime_state = state.runtime_state.write().await;
-    let workflow = runtime_state
-        .config
-        .workflows
-        .iter()
-        .find(|workflow| workflow.id == id)
-        .cloned()
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("workflow '{id}' was not found"),
-            )
-        })?;
+    let workflow = require_workflow(
+        &to_application_workflow_entries(&runtime_state.config.workflows),
+        &id,
+    )
+    .map_err(workflow_admin_error)
+    .map(|workflow| from_application_workflow_entry(&workflow))?;
     let workflow_path =
         resolve_workflow_path(&state.config_path, &runtime_state.config, &workflow.file)
             .map_err(invalid_request)?;
@@ -453,18 +282,12 @@ pub async fn activate_workflow(
     State(state): State<AdminState>,
 ) -> Result<Json<WorkflowSummary>, (StatusCode, String)> {
     let mut runtime_state = state.runtime_state.write().await;
-    let workflow = runtime_state
-        .config
-        .workflows
-        .iter()
-        .find(|workflow| workflow.id == id)
-        .cloned()
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("workflow '{id}' was not found"),
-            )
-        })?;
+    let workflow = require_workflow(
+        &to_application_workflow_entries(&runtime_state.config.workflows),
+        &id,
+    )
+    .map_err(workflow_admin_error)
+    .map(|workflow| from_application_workflow_entry(&workflow))?;
 
     let mut next_config = runtime_state.config.clone();
     next_config.active_workflow_id = Some(id.clone());
@@ -523,19 +346,6 @@ fn manifest_tone_name(tone: &ManifestTone) -> &'static str {
     }
 }
 
-fn text_field(key: &str, label: &str) -> SettingsSchemaField {
-    SettingsSchemaField {
-        key: key.to_string(),
-        label: label.to_string(),
-        field_type: "text".to_string(),
-        required: Some(true),
-        placeholder: None,
-        help_text: None,
-        option_source: None,
-        fields: None,
-    }
-}
-
 fn workflow_document(workflows: &LoadedWorkflowSet, id: &str) -> Option<WorkflowFileConfig> {
     workflows.by_id.get(id).cloned().or_else(|| {
         (workflows.active_workflow_id.as_deref() == Some(id))
@@ -543,6 +353,27 @@ fn workflow_document(workflows: &LoadedWorkflowSet, id: &str) -> Option<Workflow
             .flatten()
             .map(|workflow| WorkflowFileConfig { workflow })
     })
+}
+
+fn to_application_workflow_entries(workflows: &[WorkflowIndexEntry]) -> Vec<WorkflowEntryInput> {
+    workflows
+        .iter()
+        .map(|workflow| WorkflowEntryInput {
+            id: workflow.id.clone(),
+            name: workflow.name.clone(),
+            file: workflow.file.clone(),
+            description: workflow.description.clone(),
+        })
+        .collect()
+}
+
+fn from_application_workflow_entry(workflow: &WorkflowEntryInput) -> WorkflowIndexEntry {
+    WorkflowIndexEntry {
+        id: workflow.id.clone(),
+        name: workflow.name.clone(),
+        file: workflow.file.clone(),
+        description: workflow.description.clone(),
+    }
 }
 
 fn workflow_summary(
@@ -629,9 +460,15 @@ fn default_workflow_document() -> WorkflowFileConfig {
     }
 }
 
-fn normalize_optional_text(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+fn workflow_admin_error(error: WorkflowAdminError) -> (StatusCode, String) {
+    let status = match error {
+        WorkflowAdminError::DuplicateWorkflowId(_) => StatusCode::CONFLICT,
+        WorkflowAdminError::WorkflowNotFound(_) => StatusCode::NOT_FOUND,
+        WorkflowAdminError::EmptyWorkflowId | WorkflowAdminError::EmptyWorkflowName => {
+            StatusCode::BAD_REQUEST
+        }
+    };
+    (status, error.message())
 }
 
 fn invalid_request(error: impl ToString) -> (StatusCode, String) {
@@ -641,16 +478,16 @@ fn invalid_request(error: impl ToString) -> (StatusCode, String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdminState, activate_workflow, create_workflow, get_workflows, put_workflow,
-        validate_config_handler,
+        activate_workflow, create_workflow, get_workflows, put_workflow, validate_config_handler,
+        AdminState,
     };
-    use crate::config::{GatewayConfig, parse_config, runtime_state_from_config};
+    use crate::config::{parse_config, runtime_state_from_config, GatewayConfig};
     use crate::wasm_plugins::load_plugin_registry;
-    use axum::Json;
     use axum::extract::Path;
     use axum::extract::State;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use axum::Json;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -888,7 +725,7 @@ description = "Fallback workflow"
         .await
         .expect("create should succeed")
         .1
-        .0;
+         .0;
 
         assert_eq!(summary.id, "new-flow");
         assert!(!summary.is_active);
@@ -898,13 +735,11 @@ description = "Fallback workflow"
         assert!(persisted_workflow.contains("start_node_id = \"start\""));
 
         let runtime_state = state.runtime_state.read().await;
-        assert!(
-            runtime_state
-                .config
-                .workflows
-                .iter()
-                .any(|workflow| workflow.id == "new-flow")
-        );
+        assert!(runtime_state
+            .config
+            .workflows
+            .iter()
+            .any(|workflow| workflow.id == "new-flow"));
         assert!(runtime_state.workflow_set.by_id.contains_key("new-flow"));
     }
 

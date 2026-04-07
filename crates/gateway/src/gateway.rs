@@ -1,16 +1,17 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::Arc;
-use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use axum::body::{Body, to_bytes};
+use axum::body::{to_bytes, Body};
 use axum::extract::{Request, State};
 use axum::http::header::{CONNECTION, HOST};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
+use infrastructure::crypto::decrypt_header_value;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -32,12 +33,11 @@ use crate::config::{
     ModelConfig, ProviderConfig, RouteConfig, RouterClauseConfig, RuleGraphConfig,
     RuleGraphNodeType, RuntimeState, WasmCapability, WasmPluginNodeConfig,
 };
-use crate::crypto::decrypt_header_value;
-use crate::rules::{RequestContext, build_header_map, evaluate_expression, render_template};
+use crate::rules::{build_header_map, evaluate_expression, render_template, RequestContext};
 use crate::wasm_plugins::{LoadedPlugin, ManifestCapability, PluginRegistry};
 
 wasmtime::component::bindgen!({
-    path: "wit",
+    path: "../../wit",
     world: "proxy-node-plugin",
     ownership: Owning,
 });
@@ -2278,16 +2278,16 @@ fn bad_gateway_error(error: impl std::fmt::Display) -> (StatusCode, String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        PluginNodeRuntime, RequestResolution, RuntimeContextPatchOp, RuntimeExecuteInput,
-        RuntimeExecuteOutput, RuntimeNodeConfig, RuntimePluginManifest, WASMTIME_PLUGIN_RUNTIME,
         execute_rule_graph, plugin_workspace_root, resolve_plugin_network_policy,
-        resolve_plugin_preopens, resolve_request, socket_addr_allowed,
+        resolve_plugin_preopens, resolve_request, socket_addr_allowed, PluginNodeRuntime,
+        RequestResolution, RuntimeContextPatchOp, RuntimeExecuteInput, RuntimeExecuteOutput,
+        RuntimeNodeConfig, RuntimePluginManifest, WASMTIME_PLUGIN_RUNTIME,
     };
     use crate::config::{
-        GatewayConfig, LoadedWorkflowSet, ProviderConfig, WasmCapability, WasmPluginNodeConfig,
-        WorkflowFileConfig, WorkflowIndexEntry, parse_config,
+        parse_config, GatewayConfig, LoadedWorkflowSet, ProviderConfig, WasmCapability,
+        WasmPluginNodeConfig, WorkflowFileConfig, WorkflowIndexEntry,
     };
-    use crate::wasm_plugins::{PluginRegistry, load_plugin_registry};
+    use crate::wasm_plugins::{load_plugin_registry, PluginRegistry};
     use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
     use std::collections::BTreeMap;
     use std::fs;
@@ -2353,6 +2353,13 @@ mod tests {
         dir
     }
 
+    fn workspace_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace root should resolve")
+    }
+
     fn write_plugin(root: &Path, id: &str, ports: &[&str], capabilities: &[&str]) {
         let plugin_dir = root.join(id);
         fs::create_dir_all(&plugin_dir).expect("plugin dir should be creatable");
@@ -2383,9 +2390,7 @@ capabilities = [{capability_values}]
     }
 
     fn copy_repo_plugin(root: &Path, id: &str) {
-        let source_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("plugins")
-            .join(id);
+        let source_dir = workspace_root().join("plugins").join(id);
         let target_dir = root.join(id);
         let source_wasm = {
             let nested = source_dir.join("wasm").join("plugin.wasm");
@@ -2403,7 +2408,8 @@ capabilities = [{capability_values}]
             target_dir.join("plugin.toml"),
         )
         .expect("plugin manifest should copy");
-        fs::copy(source_wasm, target_wasm_dir.join("plugin.wasm")).expect("plugin wasm should copy");
+        fs::copy(source_wasm, target_wasm_dir.join("plugin.wasm"))
+            .expect("plugin wasm should copy");
     }
 
     fn load_test_registry(ports: &[&str], capabilities: &[&str]) -> PluginRegistry {
@@ -3034,7 +3040,7 @@ target = "end"
         _current_path: &str,
         granted_capabilities: Vec<WasmCapability>,
     ) {
-        let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let project_root = workspace_root();
         let plugins_root = project_root.join("plugins");
         let registry = load_plugin_registry(&plugins_root).expect("plugin registry should load");
         let fixture_root = project_root.join("tests/fixtures");

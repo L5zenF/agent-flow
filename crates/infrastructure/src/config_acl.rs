@@ -1,6 +1,6 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::collections::HashSet;
 use std::path::{Component, Path};
 
 use domain::{
@@ -611,7 +611,9 @@ fn validate_rule_graph_subset(
     Ok(())
 }
 
-fn validate_route_and_header_rule_subset(raw: &RawGatewayConfig) -> Result<(), InfrastructureAclError> {
+fn validate_route_and_header_rule_subset(
+    raw: &RawGatewayConfig,
+) -> Result<(), InfrastructureAclError> {
     let provider_ids = raw
         .providers
         .iter()
@@ -1036,7 +1038,11 @@ fn validate_workflow_index_subset(raw: &RawGatewayConfig) -> Result<(), Infrastr
                 "active_workflow_id must be set when workflows are present".to_string(),
             )
         })?;
-        if !raw.workflows.iter().any(|workflow| workflow.id == active_id) {
+        if !raw
+            .workflows
+            .iter()
+            .any(|workflow| workflow.id == active_id)
+        {
             return Err(InfrastructureAclError::Validation(format!(
                 "active_workflow_id '{}' does not reference an indexed workflow",
                 active_id

@@ -16,7 +16,9 @@ pub fn summarize_gateway_catalog(
     catalog: &GatewayCatalog,
     workflows: &WorkflowIndex,
 ) -> Result<GatewaySummary, ApplicationError> {
-    let active_workflow = workflows.active().ok_or(ApplicationError::NoActiveWorkflow)?;
+    let active_workflow = workflows
+        .active()
+        .ok_or(ApplicationError::NoActiveWorkflow)?;
 
     Ok(GatewaySummary {
         provider_count: catalog.providers().len(),
@@ -44,7 +46,9 @@ mod tests {
         RouteId, Workflow, WorkflowId, WorkflowIndex,
     };
 
-    use crate::{ApplicationError, GatewaySummary, summarize_gateway_catalog, summarize_gateway_from_source};
+    use crate::{
+        ApplicationError, GatewaySummary, summarize_gateway_catalog, summarize_gateway_from_source,
+    };
 
     #[test]
     fn summarizes_catalog_with_active_workflow() {
@@ -66,11 +70,13 @@ mod tests {
         )
         .expect("valid gateway catalog");
         let workflows = WorkflowIndex::new(
-            vec![Workflow::new(
-                WorkflowId::new("chat-routing").expect("valid id"),
-                vec![RouteId::new("route-a").expect("valid route id")],
-            )
-            .expect("valid workflow")],
+            vec![
+                Workflow::new(
+                    WorkflowId::new("chat-routing").expect("valid id"),
+                    vec![RouteId::new("route-a").expect("valid route id")],
+                )
+                .expect("valid workflow"),
+            ],
             Some(WorkflowId::new("chat-routing").expect("valid id")),
         )
         .expect("valid workflow index");
@@ -103,11 +109,13 @@ mod tests {
         )
         .expect("valid gateway catalog");
         let workflows = WorkflowIndex::new(
-            vec![Workflow::new(
-                WorkflowId::new("chat-routing").expect("valid id"),
-                vec![RouteId::new("route-a").expect("valid route id")],
-            )
-            .expect("valid workflow")],
+            vec![
+                Workflow::new(
+                    WorkflowId::new("chat-routing").expect("valid id"),
+                    vec![RouteId::new("route-a").expect("valid route id")],
+                )
+                .expect("valid workflow"),
+            ],
             None,
         )
         .expect("valid workflow index");
@@ -151,11 +159,13 @@ mod tests {
         )
         .expect("valid gateway catalog");
         let workflows = WorkflowIndex::new(
-            vec![Workflow::new(
-                WorkflowId::new("chat-routing").expect("valid id"),
-                vec![RouteId::new("route-a").expect("valid route id")],
-            )
-            .expect("valid workflow")],
+            vec![
+                Workflow::new(
+                    WorkflowId::new("chat-routing").expect("valid id"),
+                    vec![RouteId::new("route-a").expect("valid route id")],
+                )
+                .expect("valid workflow"),
+            ],
             Some(WorkflowId::new("chat-routing").expect("valid id")),
         )
         .expect("valid workflow index");

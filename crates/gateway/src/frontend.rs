@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use axum::extract::Path as AxumPath;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 pub async fn panel_index() -> Response {

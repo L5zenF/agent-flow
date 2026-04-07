@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use wasmtime::{Config as WasmtimeConfig, Engine, Module, component::Component};
+use wasmtime::{component::Component, Config as WasmtimeConfig, Engine, Module};
 
 type PluginResult<T> = Result<T, Box<dyn Error>>;
 
@@ -598,8 +598,8 @@ fn default_config_schema_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ManifestCapability, ManifestCategory, ManifestIcon, ManifestTone, PluginRuntimeKind,
-        load_plugin_registry, parse_plugin_manifest,
+        load_plugin_registry, parse_plugin_manifest, ManifestCapability, ManifestCategory,
+        ManifestIcon, ManifestTone, PluginRuntimeKind,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -786,8 +786,7 @@ capabilities = ["log"]
         .expect("manifest should write");
         let wasm_dir = plugin_dir.join("wasm");
         fs::create_dir_all(&wasm_dir).expect("wasm dir should be creatable");
-        fs::write(wasm_dir.join("plugin.wasm"), TEST_CORE_MODULE_BYTES)
-            .expect("wasm should write");
+        fs::write(wasm_dir.join("plugin.wasm"), TEST_CORE_MODULE_BYTES).expect("wasm should write");
 
         let registry = load_plugin_registry(&root).expect("registry should load");
         let plugin = registry

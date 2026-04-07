@@ -1,6 +1,20 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
+use application::{
+    ensure_active_workflow_loaded, load_indexed_workflows, resolve_indexed_workflow_path,
+    resolve_indexed_workflows_dir, validate_gateway_basics, validate_rule_code_runner_node,
+    validate_rule_condition_node, validate_rule_copy_header_node, validate_rule_graph_structure,
+    validate_rule_header_mutation_node, validate_rule_header_name_node, validate_rule_log_node,
+    validate_rule_match_node, validate_rule_route_provider_node, validate_rule_router_node,
+    validate_rule_select_model_node, validate_rule_set_context_node, validate_rule_value_node,
+    validate_rule_wasm_plugin_node, ConditionModeInput, GatewayValidationInput,
+    HeaderRuleValidationInput, MatchBranchInput, ModelValidationInput, ProviderValidationInput,
+    RouteValidationInput, RouterClauseInput, RouterRuleInput, RuleGraphEdgeValidationInput,
+    RuleGraphNodeValidationInput, RuleGraphStructureInput, RuleScopeInput, WasmCapabilityInput,
+    WorkflowIndexEntryInput, WorkflowValidationInput,
+};
+use infrastructure::atomic_store::write_toml_atomic;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -412,12 +426,7 @@ pub fn load_runtime_state(path: &Path) -> Result<RuntimeState, Box<dyn std::erro
 }
 
 pub fn resolve_workflows_dir(config_path: &Path, config: &GatewayConfig) -> Option<PathBuf> {
-    config.workflows_dir.as_ref().map(|relative| {
-        config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(relative)
-    })
+    resolve_indexed_workflows_dir(config_path, config.workflows_dir.as_deref())
 }
 
 pub fn resolve_workflow_path(
@@ -425,9 +434,8 @@ pub fn resolve_workflow_path(
     config: &GatewayConfig,
     workflow_file: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let workflows_dir = resolve_workflows_dir(config_path, config)
-        .ok_or("workflows_dir must be set when workflows are present")?;
-    Ok(workflows_dir.join(workflow_file))
+    resolve_indexed_workflow_path(config_path, config.workflows_dir.as_deref(), workflow_file)
+        .map_err(|error| error.to_string().into())
 }
 
 pub fn load_workflow_file(path: &Path) -> Result<WorkflowFileConfig, Box<dyn std::error::Error>> {
@@ -439,14 +447,7 @@ pub fn save_workflow_file_atomic(
     path: &Path,
     workflow: &WorkflowFileConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let serialized = toml::to_string_pretty(workflow)?;
-    let temp_path = path.with_extension("toml.tmp");
-    std::fs::write(&temp_path, serialized)?;
-    std::fs::rename(temp_path, path)?;
+    write_toml_atomic(path, workflow)?;
     Ok(())
 }
 
@@ -459,66 +460,42 @@ pub fn load_workflow_set(
         "provider",
     )?;
     let model_ids = unique_ids(config.models.iter().map(|model| model.id.as_str()), "model")?;
-    let mut by_id = BTreeMap::new();
-    let workflows_dir = resolve_workflows_dir(config_path, config);
+    let workflow_entries = config
+        .workflows
+        .iter()
+        .map(|workflow| WorkflowIndexEntryInput {
+            id: workflow.id.clone(),
+            file: workflow.file.clone(),
+        })
+        .collect::<Vec<_>>();
     let allow_legacy_missing_file_fallback = uses_synthesized_legacy_workflow_index(config);
-
-    if !config.workflows.is_empty() {
-        match workflows_dir {
-            Some(ref workflows_dir) => {
-                for workflow in &config.workflows {
-                    let workflow_path = workflows_dir.join(&workflow.file);
-                    let loaded = match load_workflow_file(&workflow_path) {
-                        Ok(loaded) => loaded,
-                        Err(error)
-                            if allow_legacy_missing_file_fallback
-                                && is_not_found_error(error.as_ref()) =>
-                        {
-                            continue;
-                        }
-                        Err(error) => {
-                            return Err(format!(
-                                "failed to load workflow '{}' from '{}': {error}",
-                                workflow.id,
-                                workflow_path.display()
-                            )
-                            .into());
-                        }
-                    };
-                    validate_rule_graph(
-                        &loaded.workflow,
-                        &provider_ids,
-                        &model_ids,
-                        &config.models,
+    let by_id = load_indexed_workflows(
+        config_path,
+        config.workflows_dir.as_deref(),
+        &workflow_entries,
+        allow_legacy_missing_file_fallback,
+        load_workflow_file,
+        |error| is_not_found_error(error.as_ref()),
+        |workflow_id, workflow_path, loaded| {
+            validate_rule_graph(&loaded.workflow, &provider_ids, &model_ids, &config.models)
+                .map_err(|error| {
+                    format!(
+                        "workflow '{}' in '{}' is invalid: {error}",
+                        workflow_id,
+                        workflow_path.display()
                     )
-                    .map_err(|error| {
-                        format!(
-                            "workflow '{}' in '{}' is invalid: {error}",
-                            workflow.id,
-                            workflow_path.display()
-                        )
-                    })?;
-                    by_id.insert(workflow.id.clone(), loaded);
-                }
-            }
-            None => {
-                return Err("workflows_dir must be set when workflows are present".into());
-            }
-        }
-    }
+                })
+        },
+    )
+    .map_err(|error| error.to_string())?;
 
-    if let Some(active_workflow_id) = config.active_workflow_id.as_deref() {
-        if !config.workflows.is_empty()
-            && !by_id.contains_key(active_workflow_id)
-            && !allow_legacy_missing_file_fallback
-        {
-            return Err(format!(
-                "active workflow '{}' could not be loaded from indexed workflow files",
-                active_workflow_id
-            )
-            .into());
-        }
-    }
+    ensure_active_workflow_loaded(
+        config.active_workflow_id.as_deref(),
+        !config.workflows.is_empty(),
+        &by_id,
+        allow_legacy_missing_file_fallback,
+    )
+    .map_err(|error| error.to_string())?;
 
     Ok(LoadedWorkflowSet {
         summaries: config.workflows.clone(),
@@ -545,14 +522,7 @@ pub fn save_config_atomic(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let normalized = normalize_legacy_rule_graph(config.clone());
     validate_config(&normalized)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let serialized = toml::to_string_pretty(&normalized)?;
-    let temp_path = path.with_extension("toml.tmp");
-    std::fs::write(&temp_path, serialized)?;
-    std::fs::rename(temp_path, path)?;
+    write_toml_atomic(path, &normalized)?;
     Ok(())
 }
 
@@ -564,88 +534,80 @@ pub fn parse_config(raw: &str) -> Result<GatewayConfig, Box<dyn std::error::Erro
 }
 
 pub fn validate_config(config: &GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let provider_ids = unique_ids(
-        config.providers.iter().map(|provider| provider.id.as_str()),
-        "provider",
-    )?;
-    let model_ids = unique_ids(config.models.iter().map(|model| model.id.as_str()), "model")?;
-    let route_ids = unique_ids(config.routes.iter().map(|route| route.id.as_str()), "route")?;
-    unique_ids(
-        config.header_rules.iter().map(|rule| rule.id.as_str()),
-        "header_rule",
-    )?;
-
-    for provider in &config.providers {
-        if provider.id.trim().is_empty() {
-            return Err("provider id cannot be empty".into());
-        }
-        if provider.base_url.trim().is_empty() {
-            return Err(format!("provider '{}' base_url cannot be empty", provider.id).into());
-        }
-    }
-
-    for model in &config.models {
-        if !provider_ids.contains(model.provider_id.as_str()) {
-            return Err(format!(
-                "model '{}' references missing provider '{}'",
-                model.id, model.provider_id
-            )
-            .into());
-        }
-    }
-
-    for route in &config.routes {
-        if route.matcher.trim().is_empty() {
-            return Err(format!("route '{}' matcher cannot be empty", route.id).into());
-        }
-        if !provider_ids.contains(route.provider_id.as_str()) {
-            return Err(format!(
-                "route '{}' references missing provider '{}'",
-                route.id, route.provider_id
-            )
-            .into());
-        }
-        if let Some(model_id) = route.model_id.as_deref() {
-            if !model_ids.contains(model_id) {
-                return Err(format!(
-                    "route '{}' references missing model '{}'",
-                    route.id, model_id
-                )
-                .into());
-            }
-        }
-    }
-
-    for rule in &config.header_rules {
-        match rule.scope {
-            RuleScope::Global => {
-                if rule.target_id.is_some() {
-                    return Err(format!(
-                        "header_rule '{}' must not define target_id for global scope",
-                        rule.id
-                    )
-                    .into());
-                }
-            }
-            RuleScope::Provider => validate_rule_target(rule, &provider_ids, "provider")?,
-            RuleScope::Model => validate_rule_target(rule, &model_ids, "model")?,
-            RuleScope::Route => validate_rule_target(rule, &route_ids, "route")?,
-        }
-
-        if rule.actions.is_empty() {
-            return Err(
-                format!("header_rule '{}' must contain at least one action", rule.id).into(),
-            );
-        }
-    }
-
-    validate_workflow_index(config)?;
+    let basic_validation = validate_gateway_basics(&GatewayValidationInput {
+        workflows_dir: config.workflows_dir.clone(),
+        active_workflow_id: config.active_workflow_id.clone(),
+        providers: config
+            .providers
+            .iter()
+            .map(|provider| ProviderValidationInput {
+                id: provider.id.clone(),
+                base_url: provider.base_url.clone(),
+            })
+            .collect(),
+        models: config
+            .models
+            .iter()
+            .map(|model| ModelValidationInput {
+                id: model.id.clone(),
+                provider_id: model.provider_id.clone(),
+            })
+            .collect(),
+        routes: config
+            .routes
+            .iter()
+            .map(|route| RouteValidationInput {
+                id: route.id.clone(),
+                matcher: route.matcher.clone(),
+                provider_id: route.provider_id.clone(),
+                model_id: route.model_id.clone(),
+            })
+            .collect(),
+        header_rules: config
+            .header_rules
+            .iter()
+            .map(|rule| HeaderRuleValidationInput {
+                id: rule.id.clone(),
+                scope: map_rule_scope(rule.scope),
+                target_id: rule.target_id.clone(),
+                actions_len: rule.actions.len(),
+            })
+            .collect(),
+        workflows: config
+            .workflows
+            .iter()
+            .map(|workflow| WorkflowValidationInput {
+                id: workflow.id.clone(),
+                file: workflow.file.clone(),
+            })
+            .collect(),
+    })
+    .map_err(|error| error.to_string())?;
+    let provider_ids = basic_validation
+        .provider_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let model_ids = basic_validation
+        .model_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
 
     if let Some(graph) = &config.rule_graph {
         validate_rule_graph(graph, &provider_ids, &model_ids, &config.models)?;
     }
 
     Ok(())
+}
+
+fn map_rule_scope(scope: RuleScope) -> RuleScopeInput {
+    match scope {
+        RuleScope::Global => RuleScopeInput::Global,
+        RuleScope::Provider => RuleScopeInput::Provider,
+        RuleScope::Model => RuleScopeInput::Model,
+        RuleScope::Route => RuleScopeInput::Route,
+    }
 }
 
 pub fn normalize_legacy_rule_graph(mut config: GatewayConfig) -> GatewayConfig {
@@ -844,134 +806,45 @@ fn is_not_found_error(error: &(dyn std::error::Error + 'static)) -> bool {
         .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
 }
 
-fn validate_workflow_index(config: &GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(workflows_dir) = config.workflows_dir.as_deref() {
-        validate_workflow_relative_path("workflows_dir", workflows_dir)?;
-    }
-
-    let workflow_ids = unique_ids(
-        config.workflows.iter().map(|workflow| workflow.id.as_str()),
-        "workflow",
-    )?;
-
-    let mut workflow_files = HashSet::new();
-    for workflow in &config.workflows {
-        if !workflow_files.insert(workflow.file.as_str()) {
-            return Err(format!("duplicate workflow file '{}'", workflow.file).into());
-        }
-    }
-
-    for workflow in &config.workflows {
-        if workflow.file.trim().is_empty() {
-            return Err(format!("workflow '{}' file cannot be empty", workflow.id).into());
-        }
-        validate_workflow_relative_path(
-            &format!("workflow '{}' file", workflow.id),
-            &workflow.file,
-        )?;
-    }
-
-    if !config.workflows.is_empty() {
-        let Some(active_workflow_id) = config.active_workflow_id.as_deref() else {
-            return Err("active_workflow_id must be set when workflows are present".into());
-        };
-        if !workflow_ids.contains(active_workflow_id) {
-            return Err(format!(
-                "active_workflow_id '{}' does not reference an indexed workflow",
-                active_workflow_id
-            )
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_workflow_relative_path(
-    field: &str,
-    value: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(format!("{field} cannot be empty").into());
-    }
-
-    let path = Path::new(value);
-    if path.is_absolute() {
-        return Err(format!("{field} must use relative paths").into());
-    }
-    if path.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::Prefix(_) | Component::RootDir
-        )
-    }) {
-        return Err(format!("{field} must not contain parent traversal").into());
-    }
-
-    Ok(())
-}
-
 fn validate_rule_graph(
     graph: &RuleGraphConfig,
     provider_ids: &HashSet<&str>,
     model_ids: &HashSet<&str>,
     models: &[ModelConfig],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if graph.start_node_id.trim().is_empty() {
-        return Err("rule_graph start_node_id cannot be empty".into());
-    }
-
-    let node_ids = unique_ids(
-        graph.nodes.iter().map(|node| node.id.as_str()),
-        "rule_graph node",
-    )?;
-    unique_ids(
-        graph.edges.iter().map(|edge| edge.id.as_str()),
-        "rule_graph edge",
-    )?;
-
-    if !node_ids.contains(graph.start_node_id.as_str()) {
-        return Err(format!(
-            "rule_graph start node '{}' does not exist",
-            graph.start_node_id
-        )
-        .into());
-    }
-
-    let start_count = graph
-        .nodes
+    let provider_ids_owned = provider_ids
         .iter()
-        .filter(|node| node.node_type == RuleGraphNodeType::Start)
-        .count();
-    if start_count != 1 {
-        return Err(
-            format!("rule_graph requires exactly one start node, found {start_count}").into(),
-        );
-    }
-
-    for edge in &graph.edges {
-        if !node_ids.contains(edge.source.as_str()) {
-            return Err(format!(
-                "rule_graph edge '{}' missing source '{}'",
-                edge.id, edge.source
-            )
-            .into());
-        }
-        if !node_ids.contains(edge.target.as_str()) {
-            return Err(format!(
-                "rule_graph edge '{}' missing target '{}'",
-                edge.id, edge.target
-            )
-            .into());
-        }
-    }
+        .map(|id| id.to_string())
+        .collect::<HashSet<_>>();
+    let model_ids_owned = model_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<HashSet<_>>();
+    let _ = validate_rule_graph_structure(&RuleGraphStructureInput {
+        start_node_id: graph.start_node_id.clone(),
+        nodes: graph
+            .nodes
+            .iter()
+            .map(|node| RuleGraphNodeValidationInput {
+                id: node.id.clone(),
+                is_start: node.node_type == RuleGraphNodeType::Start,
+            })
+            .collect(),
+        edges: graph
+            .edges
+            .iter()
+            .map(|edge| RuleGraphEdgeValidationInput {
+                id: edge.id.clone(),
+                source: edge.source.clone(),
+                target: edge.target.clone(),
+            })
+            .collect(),
+    })
+    .map_err(|error| error.to_string())?;
 
     for node in &graph.nodes {
-        validate_rule_graph_node(node, graph, provider_ids, model_ids, models)?;
+        validate_rule_graph_node(node, graph, &provider_ids_owned, &model_ids_owned, models)?;
     }
-
-    validate_rule_graph_acyclic(graph)?;
 
     Ok(())
 }
@@ -979,8 +852,8 @@ fn validate_rule_graph(
 fn validate_rule_graph_node(
     node: &RuleGraphNode,
     graph: &RuleGraphConfig,
-    provider_ids: &HashSet<&str>,
-    model_ids: &HashSet<&str>,
+    provider_ids_owned: &HashSet<String>,
+    model_ids_owned: &HashSet<String>,
     models: &[ModelConfig],
 ) -> Result<(), Box<dyn std::error::Error>> {
     match node.node_type {
@@ -991,172 +864,126 @@ fn validate_rule_graph_node(
                     format!("rule_graph node '{}' missing condition config", node.id).into(),
                 );
             };
-            match condition.mode {
-                ConditionMode::Expression => {
-                    if condition
-                        .expression
-                        .as_deref()
-                        .unwrap_or("")
-                        .trim()
-                        .is_empty()
-                    {
-                        return Err(format!(
-                            "rule_graph condition node '{}' requires expression",
-                            node.id
-                        )
-                        .into());
-                    }
-                }
-                ConditionMode::Builder => {
-                    let Some(builder) = &condition.builder else {
-                        return Err(format!(
-                            "rule_graph condition node '{}' requires builder config",
-                            node.id
-                        )
-                        .into());
-                    };
-                    if builder.field.trim().is_empty()
-                        || builder.operator.trim().is_empty()
-                        || builder.value.trim().is_empty()
-                    {
-                        return Err(format!(
-                            "rule_graph condition node '{}' builder fields cannot be empty",
-                            node.id
-                        )
-                        .into());
-                    }
-                }
-            }
             let outgoing = graph
                 .edges
                 .iter()
                 .filter(|edge| edge.source == node.id)
                 .count();
-            if outgoing > 2 {
-                return Err(format!(
-                    "rule_graph condition node '{}' supports at most 2 outgoing edges",
-                    node.id
-                )
-                .into());
-            }
+            validate_rule_condition_node(
+                node.id.as_str(),
+                map_condition_mode(condition.mode),
+                condition.expression.as_deref(),
+                condition.builder.as_ref().map(|builder| {
+                    (
+                        builder.field.as_str(),
+                        builder.operator.as_str(),
+                        builder.value.as_str(),
+                    )
+                }),
+                outgoing,
+            )
+            .map_err(|error| error.to_string())?;
         }
         RuleGraphNodeType::RouteProvider => {
-            let Some(config) = &node.route_provider else {
-                return Err(format!(
-                    "rule_graph node '{}' missing route_provider config",
-                    node.id
-                )
-                .into());
-            };
-            if !provider_ids.contains(config.provider_id.as_str()) {
-                return Err(format!(
-                    "rule_graph node '{}' references missing provider '{}'",
-                    node.id, config.provider_id
-                )
-                .into());
-            }
+            validate_rule_route_provider_node(
+                node.id.as_str(),
+                node.route_provider
+                    .as_ref()
+                    .map(|config| config.provider_id.as_str()),
+                provider_ids_owned,
+            )
+            .map_err(|error| error.to_string())?;
         }
         RuleGraphNodeType::SelectModel => {
-            let Some(config) = &node.select_model else {
-                return Err(
-                    format!("rule_graph node '{}' missing select_model config", node.id).into(),
-                );
-            };
-            if !provider_ids.contains(config.provider_id.as_str()) {
-                return Err(format!(
-                    "rule_graph node '{}' references missing provider '{}'",
-                    node.id, config.provider_id
-                )
-                .into());
-            }
-            if !model_ids.contains(config.model_id.as_str()) {
-                return Err(format!(
-                    "rule_graph node '{}' references missing model '{}'",
-                    node.id, config.model_id
-                )
-                .into());
-            }
-            let model = models
-                .iter()
-                .find(|model| model.id == config.model_id)
-                .ok_or_else(|| {
-                    format!(
-                        "rule_graph node '{}' references missing model '{}'",
-                        node.id, config.model_id
-                    )
-                })?;
-            if model.provider_id != config.provider_id {
-                return Err(format!(
-                    "rule_graph node '{}' model '{}' does not belong to provider '{}'",
-                    node.id, config.model_id, config.provider_id
-                )
-                .into());
-            }
+            let model_provider_id = node.select_model.as_ref().and_then(|config| {
+                models
+                    .iter()
+                    .find(|model| model.id == config.model_id)
+                    .map(|model| model.provider_id.as_str())
+            });
+            validate_rule_select_model_node(
+                node.id.as_str(),
+                node.select_model
+                    .as_ref()
+                    .map(|config| config.provider_id.as_str()),
+                node.select_model
+                    .as_ref()
+                    .map(|config| config.model_id.as_str()),
+                provider_ids_owned,
+                model_ids_owned,
+                model_provider_id,
+            )
+            .map_err(|error| error.to_string())?;
         }
-        RuleGraphNodeType::RewritePath => {
-            validate_value_node(node.id.as_str(), node.rewrite_path.as_ref())?
-        }
-        RuleGraphNodeType::SetContext => {
-            validate_set_context_node(node.id.as_str(), node.set_context.as_ref())?
-        }
+        RuleGraphNodeType::RewritePath => validate_rule_value_node(
+            node.id.as_str(),
+            node.rewrite_path
+                .as_ref()
+                .map(|config| config.value.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
+        RuleGraphNodeType::SetContext => validate_rule_set_context_node(
+            node.id.as_str(),
+            node.set_context.as_ref().map(|config| config.key.as_str()),
+            node.set_context
+                .as_ref()
+                .map(|config| config.value_template.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
         RuleGraphNodeType::Router => {
             validate_router_node(node.id.as_str(), graph, node.router.as_ref())?
         }
-        RuleGraphNodeType::Log => validate_log_node(node.id.as_str(), node.log.as_ref())?,
-        RuleGraphNodeType::SetHeader => {
-            validate_header_mutation_node(node.id.as_str(), node.set_header.as_ref())?
-        }
-        RuleGraphNodeType::RemoveHeader => {
-            validate_header_name_node(node.id.as_str(), node.remove_header.as_ref())?
-        }
-        RuleGraphNodeType::CopyHeader => {
-            validate_copy_header_node(node.id.as_str(), node.copy_header.as_ref())?
-        }
-        RuleGraphNodeType::SetHeaderIfAbsent => {
-            validate_header_mutation_node(node.id.as_str(), node.set_header_if_absent.as_ref())?
-        }
+        RuleGraphNodeType::Log => validate_rule_log_node(
+            node.id.as_str(),
+            node.log.as_ref().map(|config| config.message.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
+        RuleGraphNodeType::SetHeader => validate_rule_header_mutation_node(
+            node.id.as_str(),
+            node.set_header.as_ref().map(|config| config.name.as_str()),
+            node.set_header.as_ref().map(|config| config.value.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
+        RuleGraphNodeType::RemoveHeader => validate_rule_header_name_node(
+            node.id.as_str(),
+            node.remove_header
+                .as_ref()
+                .map(|config| config.name.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
+        RuleGraphNodeType::CopyHeader => validate_rule_copy_header_node(
+            node.id.as_str(),
+            node.copy_header.as_ref().map(|config| config.from.as_str()),
+            node.copy_header.as_ref().map(|config| config.to.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
+        RuleGraphNodeType::SetHeaderIfAbsent => validate_rule_header_mutation_node(
+            node.id.as_str(),
+            node.set_header_if_absent
+                .as_ref()
+                .map(|config| config.name.as_str()),
+            node.set_header_if_absent
+                .as_ref()
+                .map(|config| config.value.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
         RuleGraphNodeType::WasmPlugin => {
             validate_wasm_plugin_node(node.id.as_str(), node.wasm_plugin.as_ref())?
         }
         RuleGraphNodeType::Match => {
             validate_match_node(node.id.as_str(), graph, node.match_node.as_ref())?
         }
-        RuleGraphNodeType::CodeRunner => {
-            validate_code_runner_node(node.id.as_str(), node.code_runner.as_ref())?
-        }
+        RuleGraphNodeType::CodeRunner => validate_rule_code_runner_node(
+            node.id.as_str(),
+            node.code_runner.as_ref().map(|config| config.timeout_ms),
+            node.code_runner
+                .as_ref()
+                .map(|config| config.max_memory_bytes),
+            node.code_runner.as_ref().map(|config| config.code.as_str()),
+        )
+        .map_err(|error| error.to_string())?,
     }
 
-    Ok(())
-}
-
-fn validate_value_node(
-    node_id: &str,
-    config: Option<&ValueNodeConfig>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing value config").into());
-    };
-    if config.value.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' value cannot be empty").into());
-    }
-    Ok(())
-}
-
-fn validate_set_context_node(
-    node_id: &str,
-    config: Option<&SetContextNodeConfig>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing set_context config").into());
-    };
-    if config.key.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' context key cannot be empty").into());
-    }
-    if config.value_template.trim().is_empty() {
-        return Err(
-            format!("rule_graph node '{node_id}' context value_template cannot be empty").into(),
-        );
-    }
     Ok(())
 }
 
@@ -1165,129 +992,34 @@ fn validate_router_node(
     graph: &RuleGraphConfig,
     config: Option<&RouterNodeConfig>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing router config").into());
-    };
-    if config.rules.is_empty() {
-        return Err(
-            format!("rule_graph node '{node_id}' must define at least one router rule").into(),
-        );
-    }
-
     let node_ids = graph
         .nodes
         .iter()
-        .map(|node| node.id.as_str())
+        .map(|node| node.id.clone())
         .collect::<HashSet<_>>();
-    let mut rule_ids = HashSet::new();
-    for rule in &config.rules {
-        if rule.id.trim().is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' contains a router rule with empty id"
-            )
-            .into());
-        }
-        if !rule_ids.insert(rule.id.as_str()) {
-            return Err(format!(
-                "rule_graph node '{node_id}' has duplicate router rule id '{}'",
-                rule.id
-            )
-            .into());
-        }
-        if rule.clauses.is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' router rule '{}' must contain at least one clause",
-                rule.id
-            )
-            .into());
-        }
-        if rule.target_node_id.trim().is_empty() || !node_ids.contains(rule.target_node_id.as_str())
-        {
-            return Err(format!(
-                "rule_graph node '{node_id}' router rule '{}' references missing target '{}'",
-                rule.id, rule.target_node_id
-            )
-            .into());
-        }
-        for clause in &rule.clauses {
-            if clause.source.trim().is_empty()
-                || clause.operator.trim().is_empty()
-                || clause.value.trim().is_empty()
-            {
-                return Err(format!(
-                    "rule_graph node '{node_id}' router rule '{}' contains an incomplete clause",
-                    rule.id
-                )
-                .into());
-            }
-        }
-    }
+    let rules = config.map(|config| {
+        config
+            .rules
+            .iter()
+            .map(|rule| RouterRuleInput {
+                id: rule.id.clone(),
+                clauses: rule
+                    .clauses
+                    .iter()
+                    .map(|clause| RouterClauseInput {
+                        source: clause.source.clone(),
+                        operator: clause.operator.clone(),
+                        value: clause.value.clone(),
+                    })
+                    .collect(),
+                target_node_id: rule.target_node_id.clone(),
+            })
+            .collect::<Vec<_>>()
+    });
+    let fallback = config.and_then(|config| config.fallback_node_id.as_deref());
 
-    if let Some(fallback) = config.fallback_node_id.as_deref() {
-        if fallback.trim().is_empty() || !node_ids.contains(fallback) {
-            return Err(format!(
-                "rule_graph node '{node_id}' references missing fallback target '{fallback}'"
-            )
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_log_node(
-    node_id: &str,
-    config: Option<&LogNodeConfig>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing log config").into());
-    };
-    if config.message.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' log message cannot be empty").into());
-    }
-    Ok(())
-}
-
-fn validate_header_mutation_node(
-    node_id: &str,
-    config: Option<&HeaderMutationNodeConfig>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing header config").into());
-    };
-    if config.name.trim().is_empty() || config.value.trim().is_empty() {
-        return Err(
-            format!("rule_graph node '{node_id}' header name/value cannot be empty").into(),
-        );
-    }
-    Ok(())
-}
-
-fn validate_header_name_node(
-    node_id: &str,
-    config: Option<&HeaderNameNodeConfig>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing remove_header config").into());
-    };
-    if config.name.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' header name cannot be empty").into());
-    }
-    Ok(())
-}
-
-fn validate_copy_header_node(
-    node_id: &str,
-    config: Option<&CopyHeaderNodeConfig>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing copy_header config").into());
-    };
-    if config.from.trim().is_empty() || config.to.trim().is_empty() {
-        return Err(
-            format!("rule_graph node '{node_id}' copy header fields cannot be empty").into(),
-        );
-    }
+    validate_rule_router_node(node_id, &node_ids, rules.as_deref(), fallback)
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1296,69 +1028,27 @@ fn validate_wasm_plugin_node(
     config: Option<&WasmPluginNodeConfig>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing wasm_plugin config").into());
+        return validate_rule_wasm_plugin_node(node_id, None, None, None, None, &[], &[], &[], &[])
+            .map_err(|error| error.to_string())
+            .map_err(Into::into);
     };
-    if config.plugin_id.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' plugin_id cannot be empty").into());
-    }
-    if config.timeout_ms == 0 {
-        return Err(
-            format!("rule_graph node '{node_id}' timeout_ms must be greater than zero").into(),
-        );
-    }
-    if matches!(config.fuel, Some(0)) {
-        return Err(
-            format!("rule_graph node '{node_id}' fuel must be greater than zero when set").into(),
-        );
-    }
-    if config.max_memory_bytes == 0 {
-        return Err(format!(
-            "rule_graph node '{node_id}' max_memory_bytes must be greater than zero"
-        )
-        .into());
-    }
-
-    let grants = config
-        .granted_capabilities
-        .iter()
-        .copied()
-        .collect::<HashSet<_>>();
-    let has_fs = grants.contains(&WasmCapability::Fs);
-    let has_network = grants.contains(&WasmCapability::Network);
-
-    if has_fs {
-        if config.read_dirs.is_empty() && config.write_dirs.is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' fs capability requires read_dirs or write_dirs"
-            )
-            .into());
-        }
-    } else if !config.read_dirs.is_empty() || !config.write_dirs.is_empty() {
-        return Err(format!(
-            "rule_graph node '{node_id}' fs directories require an fs capability grant"
-        )
-        .into());
-    }
-
-    validate_wasm_plugin_paths(node_id, "read_dirs", &config.read_dirs)?;
-    validate_wasm_plugin_paths(node_id, "write_dirs", &config.write_dirs)?;
-
-    if has_network {
-        if config.allowed_hosts.is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' network capability requires allowed_hosts"
-            )
-            .into());
-        }
-    } else if !config.allowed_hosts.is_empty() {
-        return Err(format!(
-            "rule_graph node '{node_id}' allowed_hosts require a network capability grant"
-        )
-        .into());
-    }
-
-    validate_wasm_plugin_hosts(node_id, &config.allowed_hosts)?;
-
+    validate_rule_wasm_plugin_node(
+        node_id,
+        Some(config.plugin_id.as_str()),
+        Some(config.timeout_ms),
+        Some(config.fuel),
+        Some(config.max_memory_bytes),
+        &config
+            .granted_capabilities
+            .iter()
+            .copied()
+            .map(map_wasm_capability)
+            .collect::<Vec<_>>(),
+        &config.read_dirs,
+        &config.write_dirs,
+        &config.allowed_hosts,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1367,204 +1057,49 @@ fn validate_match_node(
     graph: &RuleGraphConfig,
     config: Option<&MatchNodeConfig>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing match config").into());
-    };
-    validate_wasm_plugin_node(node_id, Some(&config.plugin))?;
-    if config.branches.is_empty() {
-        return Err(
-            format!("rule_graph node '{node_id}' must define at least one match branch").into(),
-        );
-    }
-
     let node_ids = graph
         .nodes
         .iter()
-        .map(|node| node.id.as_str())
+        .map(|node| node.id.clone())
         .collect::<HashSet<_>>();
-    let mut branch_ids = HashSet::new();
-    for branch in &config.branches {
-        if branch.id.trim().is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' contains a match branch with empty id"
-            )
-            .into());
-        }
-        if !branch_ids.insert(branch.id.as_str()) {
-            return Err(format!(
-                "rule_graph node '{node_id}' has duplicate match branch id '{}'",
-                branch.id
-            )
-            .into());
-        }
-        if branch.expr.trim().is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' match branch '{}' has empty expr",
-                branch.id
-            )
-            .into());
-        }
-        if branch.target_node_id.trim().is_empty()
-            || !node_ids.contains(branch.target_node_id.as_str())
-        {
-            return Err(format!(
-                "rule_graph node '{node_id}' match branch '{}' references missing target '{}'",
-                branch.id, branch.target_node_id
-            )
-            .into());
-        }
-    }
-
-    if let Some(fallback) = config.fallback_node_id.as_deref() {
-        if fallback.trim().is_empty() || !node_ids.contains(fallback) {
-            return Err(format!(
-                "rule_graph node '{node_id}' references missing fallback target '{fallback}'"
-            )
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_code_runner_node(
-    node_id: &str,
-    config: Option<&CodeRunnerNodeConfig>,
-) -> Result<(), Box<dyn std::error::Error>> {
     let Some(config) = config else {
-        return Err(format!("rule_graph node '{node_id}' missing code_runner config").into());
+        validate_rule_match_node(node_id, &node_ids, None, None)
+            .map_err(|error| error.to_string())?;
+        return Ok(());
     };
-    if config.timeout_ms == 0 {
-        return Err(
-            format!("rule_graph node '{node_id}' timeout_ms must be greater than zero").into(),
-        );
-    }
-    if config.max_memory_bytes == 0 {
-        return Err(format!(
-            "rule_graph node '{node_id}' max_memory_bytes must be greater than zero"
-        )
-        .into());
-    }
-    if config.code.trim().is_empty() {
-        return Err(format!("rule_graph node '{node_id}' code cannot be empty").into());
-    }
-
-    Ok(())
-}
-
-fn validate_wasm_plugin_paths(
-    node_id: &str,
-    field: &str,
-    paths: &[String],
-) -> Result<(), Box<dyn std::error::Error>> {
-    if paths.is_empty() {
-        return Ok(());
-    }
-
-    for path in paths {
-        if path.trim().is_empty() {
-            return Err(
-                format!("rule_graph node '{node_id}' {field} cannot contain empty paths").into(),
-            );
-        }
-        let path_ref = Path::new(path);
-        if path_ref.is_absolute() {
-            return Err(
-                format!("rule_graph node '{node_id}' {field} must use relative paths").into(),
-            );
-        }
-        if path_ref.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::Prefix(_) | Component::RootDir
-            )
-        }) {
-            return Err(format!(
-                "rule_graph node '{node_id}' {field} must not contain parent traversal"
-            )
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_wasm_plugin_hosts(
-    node_id: &str,
-    hosts: &[String],
-) -> Result<(), Box<dyn std::error::Error>> {
-    if hosts.is_empty() {
-        return Ok(());
-    }
-
-    for host in hosts {
-        if host.trim().is_empty() {
-            return Err(format!(
-                "rule_graph node '{node_id}' allowed_hosts cannot contain empty hosts"
-            )
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_rule_graph_acyclic(graph: &RuleGraphConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let mut visiting = HashSet::new();
-    let mut visited = HashSet::new();
-
-    fn visit<'a>(
-        node_id: &'a str,
-        graph: &'a RuleGraphConfig,
-        visiting: &mut HashSet<&'a str>,
-        visited: &mut HashSet<&'a str>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if visited.contains(node_id) {
-            return Ok(());
-        }
-        if !visiting.insert(node_id) {
-            return Err(format!("rule_graph contains a cycle at node '{node_id}'").into());
-        }
-
-        for edge in graph.edges.iter().filter(|edge| edge.source == node_id) {
-            visit(edge.target.as_str(), graph, visiting, visited)?;
-        }
-
-        visiting.remove(node_id);
-        visited.insert(node_id);
-        Ok(())
-    }
-
-    visit(
-        graph.start_node_id.as_str(),
-        graph,
-        &mut visiting,
-        &mut visited,
+    validate_wasm_plugin_node(node_id, Some(&config.plugin))?;
+    let branches = config
+        .branches
+        .iter()
+        .map(|branch| MatchBranchInput {
+            id: branch.id.clone(),
+            expr: branch.expr.clone(),
+            target_node_id: branch.target_node_id.clone(),
+        })
+        .collect::<Vec<_>>();
+    validate_rule_match_node(
+        node_id,
+        &node_ids,
+        Some(&branches),
+        config.fallback_node_id.as_deref(),
     )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
-fn validate_rule_target(
-    rule: &HeaderRuleConfig,
-    ids: &HashSet<&str>,
-    kind: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(target_id) = rule.target_id.as_deref() else {
-        return Err(format!(
-            "header_rule '{}' requires target_id for {kind} scope",
-            rule.id
-        )
-        .into());
-    };
-
-    if !ids.contains(target_id) {
-        return Err(format!(
-            "header_rule '{}' references missing {kind} '{}'",
-            rule.id, target_id
-        )
-        .into());
+fn map_condition_mode(mode: ConditionMode) -> ConditionModeInput {
+    match mode {
+        ConditionMode::Builder => ConditionModeInput::Builder,
+        ConditionMode::Expression => ConditionModeInput::Expression,
     }
+}
 
-    Ok(())
+fn map_wasm_capability(capability: WasmCapability) -> WasmCapabilityInput {
+    match capability {
+        WasmCapability::Log => WasmCapabilityInput::Log,
+        WasmCapability::Fs => WasmCapabilityInput::Fs,
+        WasmCapability::Network => WasmCapabilityInput::Network,
+    }
 }
 
 fn unique_ids<'a>(
@@ -1606,9 +1141,9 @@ fn default_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        CodeRunnerLanguage, GatewayConfig, GraphPosition, RuleGraphConfig, RuleGraphNode,
-        RuleGraphNodeType, RuleScope, WasmCapability, load_config, load_workflow_file,
-        load_workflow_set, normalize_legacy_rule_graph, parse_config, resolve_workflows_dir,
+        load_config, load_workflow_file, load_workflow_set, normalize_legacy_rule_graph,
+        parse_config, resolve_workflows_dir, CodeRunnerLanguage, GatewayConfig, GraphPosition,
+        RuleGraphConfig, RuleGraphNode, RuleGraphNodeType, RuleScope, WasmCapability,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -2497,12 +2032,10 @@ target = "end"
         let config = parse_config(&legacy).expect("legacy config should normalize");
         let graph = config.rule_graph.expect("graph should exist");
 
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .all(|node| node.node_type != RuleGraphNodeType::RouteProvider)
-        );
+        assert!(graph
+            .nodes
+            .iter()
+            .all(|node| node.node_type != RuleGraphNodeType::RouteProvider));
         let select_model = graph
             .nodes
             .iter()

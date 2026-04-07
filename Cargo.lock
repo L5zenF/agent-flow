@@ -137,6 +137,7 @@ name = "application"
 version = "0.1.0"
 dependencies = [
  "domain",
+ "serde",
 ]
 
 [[package]]
@@ -1201,8 +1202,12 @@ dependencies = [
 name = "infrastructure"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
+ "base64",
  "domain",
+ "hkdf",
  "serde",
+ "sha2",
  "toml 0.8.23",
 ]
 
@@ -1533,17 +1538,16 @@ dependencies = [
 name = "proxy-tools"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
+ "application",
  "axum",
- "base64",
  "bytes",
  "clap",
- "hkdf",
+ "domain",
  "http",
+ "infrastructure",
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
  "tokio",
  "toml 0.8.23",
  "tracing",

@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 domain = { path = "../domain" }
+serde.workspace = true

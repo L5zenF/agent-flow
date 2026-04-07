@@ -1,7 +1,7 @@
 use domain::{DomainError, ModelId, ProviderId, RouteId, WorkflowId};
 use infrastructure::config_acl::{
-    map_gateway_catalog, map_gateway_config, map_workflow_index, parse_raw_gateway_config,
     InfrastructureAclError, RawModel, RawProvider, RawWorkflowIndex, RawWorkflowIndexEntry,
+    map_gateway_catalog, map_gateway_config, map_workflow_index, parse_raw_gateway_config,
 };
 
 #[test]
@@ -32,13 +32,17 @@ fn maps_gateway_catalog_from_raw_shapes() {
     )
     .expect("raw provider/model subsets should map into a valid gateway catalog");
 
-    assert!(catalog
-        .providers()
-        .contains(&ProviderId::new("openai").expect("non-blank provider id")));
-    assert!(catalog
-        .models()
-        .get(&ModelId::new("gpt-4o").expect("non-blank model id"))
-        .is_some());
+    assert!(
+        catalog
+            .providers()
+            .contains(&ProviderId::new("openai").expect("non-blank provider id"))
+    );
+    assert!(
+        catalog
+            .models()
+            .get(&ModelId::new("gpt-4o").expect("non-blank model id"))
+            .is_some()
+    );
 }
 
 #[test]
@@ -229,9 +233,11 @@ file = "chat-routing.toml"
     let (gateway_catalog, workflow_index) =
         map_gateway_config(&raw).expect("parsed raw subset should map");
 
-    assert!(gateway_catalog
-        .providers()
-        .contains(&ProviderId::new("openai").expect("non-blank provider id")));
+    assert!(
+        gateway_catalog
+            .providers()
+            .contains(&ProviderId::new("openai").expect("non-blank provider id"))
+    );
     assert_eq!(
         workflow_index.active_id(),
         Some(&WorkflowId::new("chat-routing").expect("non-blank workflow id"))
@@ -1041,8 +1047,7 @@ read_dirs = ["sandbox"]
     )
     .expect("raw config should parse");
 
-    let error =
-        map_gateway_config(&raw).expect_err("fs directories require fs capability grant");
+    let error = map_gateway_config(&raw).expect_err("fs directories require fs capability grant");
     assert_eq!(
         error,
         InfrastructureAclError::Validation(
@@ -1140,8 +1145,7 @@ read_dirs = ["../secret"]
     )
     .expect("raw config should parse");
 
-    let error =
-        map_gateway_config(&raw).expect_err("read_dirs must not contain parent traversal");
+    let error = map_gateway_config(&raw).expect_err("read_dirs must not contain parent traversal");
     assert_eq!(
         error,
         InfrastructureAclError::Validation(
