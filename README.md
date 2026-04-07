@@ -217,10 +217,10 @@ description = "Starter workflow"
 plugins/
   intent-classifier/
     plugin.toml
-    plugin.wasm
     Cargo.toml
     src/lib.rs
     wit/world.wit
+    wasm/plugin.wasm
 ```
 
 当前仓库自带一个 sample plugin：`plugins/intent-classifier`。
@@ -230,7 +230,8 @@ plugins/
 ```bash
 cd plugins/intent-classifier
 CARGO_COMPONENT_CACHE_DIR=../../.cargo-component-cache cargo component build --release
-cp target/wasm32-wasip1/release/intent_classifier.wasm plugin.wasm
+mkdir -p wasm
+cp target/wasm32-wasip1/release/intent_classifier.wasm wasm/plugin.wasm
 ```
 
 示例规则图节点：
@@ -284,7 +285,8 @@ target = "end-7"
 ```bash
 cd plugins/remote-policy-router
 CARGO_COMPONENT_CACHE_DIR=../../.cargo-component-cache cargo component build --release
-cp target/wasm32-wasip1/release/remote_policy_router.wasm plugin.wasm
+mkdir -p wasm
+cp target/wasm32-wasip1/release/remote_policy_router.wasm wasm/plugin.wasm
 ```
 
 示例节点配置：

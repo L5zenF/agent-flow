@@ -2377,7 +2377,9 @@ capabilities = [{capability_values}]
 "#
         );
         fs::write(plugin_dir.join("plugin.toml"), manifest).expect("manifest should write");
-        fs::write(plugin_dir.join("plugin.wasm"), TEST_COMPONENT_BYTES).expect("wasm should write");
+        let wasm_dir = plugin_dir.join("wasm");
+        fs::create_dir_all(&wasm_dir).expect("wasm dir should be creatable");
+        fs::write(wasm_dir.join("plugin.wasm"), TEST_COMPONENT_BYTES).expect("wasm should write");
     }
 
     fn copy_repo_plugin(root: &Path, id: &str) {
@@ -2385,17 +2387,23 @@ capabilities = [{capability_values}]
             .join("plugins")
             .join(id);
         let target_dir = root.join(id);
+        let source_wasm = {
+            let nested = source_dir.join("wasm").join("plugin.wasm");
+            if nested.is_file() {
+                nested
+            } else {
+                source_dir.join("plugin.wasm")
+            }
+        };
+        let target_wasm_dir = target_dir.join("wasm");
         fs::create_dir_all(&target_dir).expect("plugin dir should be creatable");
+        fs::create_dir_all(&target_wasm_dir).expect("plugin wasm dir should be creatable");
         fs::copy(
             source_dir.join("plugin.toml"),
             target_dir.join("plugin.toml"),
         )
         .expect("plugin manifest should copy");
-        fs::copy(
-            source_dir.join("plugin.wasm"),
-            target_dir.join("plugin.wasm"),
-        )
-        .expect("plugin wasm should copy");
+        fs::copy(source_wasm, target_wasm_dir.join("plugin.wasm")).expect("plugin wasm should copy");
     }
 
     fn load_test_registry(ports: &[&str], capabilities: &[&str]) -> PluginRegistry {

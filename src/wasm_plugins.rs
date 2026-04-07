@@ -339,17 +339,11 @@ pub fn load_plugin_registry(path: &Path) -> PluginResult<PluginRegistry> {
 
         let directory = entry.path();
         let manifest_path = directory.join("plugin.toml");
-        let wasm_path = directory.join("plugin.wasm");
+        let wasm_path = resolve_plugin_wasm_path(&directory)?;
 
         if !manifest_path.is_file() {
             return Err(invalid_data(format!(
                 "plugin directory '{}' is missing plugin.toml",
-                directory.display()
-            )));
-        }
-        if !wasm_path.is_file() {
-            return Err(invalid_data(format!(
-                "plugin directory '{}' is missing plugin.wasm",
                 directory.display()
             )));
         }
@@ -387,6 +381,23 @@ pub fn load_plugin_registry(path: &Path) -> PluginResult<PluginRegistry> {
         component_cache,
         plugins,
     })
+}
+
+fn resolve_plugin_wasm_path(directory: &Path) -> PluginResult<PathBuf> {
+    let nested_path = directory.join("wasm").join("plugin.wasm");
+    if nested_path.is_file() {
+        return Ok(nested_path);
+    }
+
+    let legacy_path = directory.join("plugin.wasm");
+    if legacy_path.is_file() {
+        return Ok(legacy_path);
+    }
+
+    Err(invalid_data(format!(
+        "plugin directory '{}' is missing wasm/plugin.wasm (and legacy plugin.wasm)",
+        directory.display()
+    )))
 }
 
 fn parse_plugin_manifest(path: &Path, raw: &str) -> PluginResult<PluginManifest> {
@@ -619,7 +630,9 @@ mod tests {
         let plugin_dir = root.join(id);
         fs::create_dir_all(&plugin_dir).expect("plugin dir should be creatable");
         fs::write(plugin_dir.join("plugin.toml"), manifest).expect("manifest should write");
-        fs::write(plugin_dir.join("plugin.wasm"), TEST_COMPONENT_BYTES).expect("wasm should write");
+        let wasm_dir = plugin_dir.join("wasm");
+        fs::create_dir_all(&wasm_dir).expect("wasm dir should be creatable");
+        fs::write(wasm_dir.join("plugin.wasm"), TEST_COMPONENT_BYTES).expect("wasm should write");
     }
 
     #[test]
@@ -674,7 +687,10 @@ tags = ["intent", "branch"]
         assert_eq!(plugin.directory(), root.join("intent-classifier").as_path());
         assert_eq!(
             plugin.wasm_path(),
-            root.join("intent-classifier").join("plugin.wasm").as_path()
+            root.join("intent-classifier")
+                .join("wasm")
+                .join("plugin.wasm")
+                .as_path()
         );
         assert_eq!(plugin.runtime_kind(), PluginRuntimeKind::Component);
     }
@@ -768,7 +784,9 @@ capabilities = ["log"]
 "#,
         )
         .expect("manifest should write");
-        fs::write(plugin_dir.join("plugin.wasm"), TEST_CORE_MODULE_BYTES)
+        let wasm_dir = plugin_dir.join("wasm");
+        fs::create_dir_all(&wasm_dir).expect("wasm dir should be creatable");
+        fs::write(wasm_dir.join("plugin.wasm"), TEST_CORE_MODULE_BYTES)
             .expect("wasm should write");
 
         let registry = load_plugin_registry(&root).expect("registry should load");

@@ -1,0 +1,117 @@
+package proxy-tools:proxy-node-plugin@0.1.0;
+
+interface node-plugin {
+  record request-header {
+    name: string,
+    value: string,
+  }
+
+  record context-entry {
+    key: string,
+    value: string,
+  }
+
+  record json-document {
+    json: string,
+  }
+
+  variant context-patch-op {
+    set(context-entry),
+    remove(string),
+  }
+
+  record context-patch {
+    ops: list<context-patch-op>,
+  }
+
+  variant header-op {
+    set(request-header),
+    append(request-header),
+    remove(string),
+  }
+
+  record path-rewrite {
+    path: string,
+  }
+
+  record next-port {
+    port: string,
+  }
+
+  variant log-level {
+    debug,
+    info,
+    warn,
+    error,
+  }
+
+  record log-entry {
+    level: log-level,
+    message: string,
+  }
+
+  variant capability-kind {
+    log,
+    fs,
+    network,
+  }
+
+  record capability-declaration {
+    kind: capability-kind,
+    required: bool,
+    scope: option<string>,
+    description: string,
+  }
+
+  record capability-grant {
+    kind: capability-kind,
+    allowed: bool,
+    scope: option<string>,
+  }
+
+  record plugin-manifest {
+    id: string,
+    name: string,
+    version: string,
+    description: string,
+    supported-output-ports: list<string>,
+    default-config-schema-hints: option<json-document>,
+    capabilities: list<capability-declaration>,
+  }
+
+  record node-config {
+    manifest: plugin-manifest,
+    grants: list<capability-grant>,
+    config: option<json-document>,
+  }
+
+  record execute-input {
+    request-method: string,
+    current-path: string,
+    request-headers: list<request-header>,
+    workflow-context: list<context-entry>,
+    selected-provider-id: string,
+    selected-model-id: string,
+    node-config: node-config,
+  }
+
+  record execute-output {
+    context-patch: option<context-patch>,
+    header-ops: list<header-op>,
+    path-rewrite: option<path-rewrite>,
+    next-port: option<next-port>,
+    logs: list<log-entry>,
+  }
+
+  variant execute-error {
+    denied(string),
+    invalid-input(string),
+    failed(string),
+  }
+
+  execute: func(input: execute-input) -> result<execute-output, execute-error>;
+}
+
+world proxy-node-plugin {
+  export node-plugin;
+}

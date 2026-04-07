@@ -5,3 +5,5 @@ web/*.tsbuildinfo
 .superpowers/
 docs
 config/
+plugins/**/wasm/
+plugins/**/plugin.wasm

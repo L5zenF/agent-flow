@@ -5,7 +5,8 @@ Local wasm plugins live under `plugins/<plugin-id>/`.
 Each plugin directory should contain:
 
 - `plugin.toml` for the package manifest and metadata.
-- `plugin.wasm` for the compiled WebAssembly component that implements the `proxy-node-plugin` world.
+- `src/` and `wit/` for plugin source code.
+- `wasm/plugin.wasm` for the compiled WebAssembly artifact that implements the `proxy-node-plugin` world.
 
 `plugin.toml` must declare these required fields:
 
@@ -29,7 +30,9 @@ Recommended shape:
 plugins/
   my-plugin/
     plugin.toml
-    plugin.wasm
+    src/lib.rs
+    wit/world.wit
+    wasm/plugin.wasm
 ```
 
 In practice:
