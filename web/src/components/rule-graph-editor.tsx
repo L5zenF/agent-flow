@@ -27,6 +27,7 @@ import ReactFlow, {
   applyNodeChanges,
   BaseEdge,
   Background,
+  BackgroundVariant,
   ConnectionMode,
   Controls,
   EdgeLabelRenderer,
@@ -536,7 +537,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   return (
     <>
       <div className="min-w-0">
-        <div className="rule-graph-canvas h-[calc(100dvh-8.75rem)] min-h-[560px] rounded-[24px] bg-[radial-gradient(circle_at_top,#fff_0%,#f7f7f5_46%,#eef2f7_100%)]">
+        <div className="rule-graph-canvas h-[calc(100dvh-8.75rem)] min-h-[560px] rounded-[24px] bg-zinc-50">
           <ReactFlow
             nodes={canvasNodes}
             edges={flowEdges}
@@ -602,10 +603,21 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
             maskColor="rgba(255,255,255,0.72)"
           />
           <Controls showInteractive={false} />
-          <Background gap={20} size={1.2} color="rgba(15, 23, 42, 0.12)" />
+          <Background
+            id="rule-grid-fine"
+            gap={24}
+            color="rgba(15, 23, 42, 0.06)"
+            variant={BackgroundVariant.Lines}
+          />
+          <Background
+            id="rule-grid-major"
+            gap={120}
+            color="rgba(15, 23, 42, 0.12)"
+            variant={BackgroundVariant.Lines}
+          />
 
           <Panel position="top-left" className="!m-4">
-            <div className="rounded-[20px] border border-zinc-200/80 bg-white/88 p-2 shadow-[0_18px_50px_rgba(15,23,42,0.12)] backdrop-blur">
+            <div className="rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
               <div className="mb-2 px-2 pt-1 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-500">
                 Nodes
               </div>
@@ -737,7 +749,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
     : data.issueCount > 0
       ? "border-amber-300"
       : tone.cardBorder;
-  const bgTone = data.unreachable ? "bg-rose-50/92" : data.issueCount > 0 ? "bg-amber-50/92" : tone.cardBg;
+  const bgTone = tone.cardBg;
   const isNoteNode = data.nodeType === "note";
 
   const commitNode = (nextNode: RuleGraphNode) => {
@@ -857,13 +869,13 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
       <div
         className={[
-          "min-w-[250px] max-w-[300px] rounded-[22px] border px-4 py-3 shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition",
+          "min-w-[250px] max-w-[300px] rounded-2xl border px-4 py-3 shadow-sm transition",
           isNoteNode
-            ? "min-h-[160px] border-dashed bg-[linear-gradient(180deg,rgba(255,251,235,0.98)_0%,rgba(254,243,199,0.96)_100%)] shadow-[0_24px_60px_rgba(180,83,9,0.16)]"
+            ? "min-h-[160px] border-dashed shadow-sm"
             : "",
           borderTone,
           bgTone,
-          selected ? "ring-2 ring-zinc-900/15" : "",
+          selected ? "ring-1 ring-zinc-300 shadow-md" : "",
         ].join(" ")}
         onDoubleClick={(event) => {
           if (draft.type === "note") {
@@ -874,16 +886,15 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
       >
         {isNoteNode ? (
           <>
-            <div className="pointer-events-none absolute left-1/2 top-0 h-5 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-200/80 blur-[1px]" />
-            <div className="pointer-events-none absolute right-0 top-0 h-10 w-10 rounded-tr-[22px] bg-[linear-gradient(135deg,rgba(255,255,255,0.9)_0%,rgba(251,191,36,0.18)_55%,rgba(217,119,6,0.28)_100%)] [clip-path:polygon(100%_0,0_0,100%_100%)]" />
+            <div className="pointer-events-none absolute right-0 top-0 h-10 w-10 rounded-tr-2xl bg-amber-100 [clip-path:polygon(100%_0,0_0,100%_100%)]" />
           </>
         ) : null}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div
               className={[
-                "inline-flex rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em]",
-                isNoteNode ? "bg-amber-300/70 text-amber-950" : "",
+                "inline-flex rounded-md px-2.5 py-1 text-[11px] font-medium",
+                isNoteNode ? "bg-amber-100 text-amber-900" : "",
                 tone.chipBg,
                 tone.chipText,
               ].join(" ")}
@@ -899,7 +910,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   data.onOpenCodeRunnerConfig();
                 }}
-                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
                 aria-label="Configure code runner"
                 title="Configure code runner"
               >
@@ -913,7 +924,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                     event.stopPropagation();
                     data.onOpenWasmConfig();
                   }}
-                  className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+                  className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
                   aria-label="Configure plugin permissions"
                   title="Configure permissions"
                 >
@@ -924,13 +935,13 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                     type="button"
                     tabIndex={-1}
                     onClick={(event) => event.preventDefault()}
-                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700"
+                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700"
                     aria-label="Show plugin details"
                     title="Plugin details"
                   >
                     <CircleHelp className="h-4 w-4" />
                   </button>
-                  <div className="pointer-events-none absolute right-0 top-[calc(100%+10px)] z-30 hidden w-64 rounded-2xl border border-zinc-200 bg-white p-3 text-left shadow-[0_18px_50px_rgba(15,23,42,0.14)] group-hover:block">
+                  <div className="pointer-events-none absolute right-0 top-[calc(100%+10px)] z-30 hidden w-64 rounded-xl border border-zinc-200 bg-white p-3 text-left shadow-lg group-hover:block">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
                       Plugin Details
                     </div>
@@ -986,7 +997,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   data.onDeleteNode();
                 }}
-                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
+                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -1016,7 +1027,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   });
                   setIsEditingNote(false);
                 }}
-                className="nodrag nopan nowheel w-full resize-none rounded-2xl border border-amber-300/80 bg-white/70 px-3 py-3 text-sm leading-7 text-zinc-900 outline-none transition [background-image:linear-gradient(transparent_31px,rgba(217,119,6,0.12)_32px)] [background-size:100%_32px] focus:border-amber-500"
+                className="nodrag nopan nowheel w-full resize-none rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm leading-7 text-zinc-900 outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
               />
             ) : (
               <button
@@ -1025,7 +1036,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   setIsEditingNote(true);
                 }}
-                className="nodrag nopan min-h-[110px] w-full rounded-2xl border border-amber-200/70 bg-amber-50/45 px-3 py-3 text-left text-sm leading-7 text-zinc-800 [background-image:linear-gradient(transparent_31px,rgba(217,119,6,0.1)_32px)] [background-size:100%_32px]"
+                className="nodrag nopan min-h-[110px] w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-left text-sm leading-7 text-zinc-800"
               >
                 {(draft.note_node?.text ?? "").trim() || "Double-click to edit"}
               </button>
@@ -1250,19 +1261,48 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
           {draft.type === "router" ? (
             <div className="space-y-2">
-              <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 px-2.5 py-2 text-[11px] text-indigo-900">
-                First match wins. Drag each branch handle on the right edge to its target.
+              <div className="flex items-center justify-between px-1">
+                <div className="text-[11px] font-medium text-zinc-700">Rules</div>
+                <div className="text-[10px] text-zinc-500">First match wins</div>
               </div>
               {(draft.router?.rules ?? []).map((rule, ruleIndex) => (
-                <div key={rule.id} className="rounded-2xl border border-zinc-200/80 bg-white/70 p-2">
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="inline-flex items-center gap-2 rounded-full bg-indigo-900 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
-                      <span className="inline-flex h-2 w-2 rounded-full bg-white/90" />
-                      Branch {ruleIndex + 1}
+                <div key={rule.id} className="rounded-lg bg-zinc-50 px-2.5 py-2">
+                  <div className="mb-2 flex items-start gap-2">
+                    <span className="inline-flex h-7 min-w-10 items-center justify-center rounded-md bg-indigo-50 px-2 text-[11px] font-medium text-indigo-700">
+                      R{ruleIndex + 1}
                     </span>
-                    <span className="min-w-0 truncate rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] text-indigo-700">
-                      {rule.target_node_id || "Drag to target"}
-                    </span>
+                    <div className="min-w-0 flex-1 space-y-2">
+                      {(rule.clauses ?? []).map((clause, clauseIndex) => (
+                        <div key={`${rule.id}-${clauseIndex}`} className="grid grid-cols-1 gap-2">
+                          <InlineSelect
+                            value={clause.source}
+                            options={ROUTER_SOURCES.map((item) => ({ value: item, label: item }))}
+                            onChange={(value) =>
+                              commitNode(updateRouterClause(draft, ruleIndex, clauseIndex, { source: value }))
+                            }
+                          />
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
+                            <InlineSelect
+                              value={clause.operator}
+                              options={CONDITION_OPERATORS.map((item) => ({ value: item, label: item }))}
+                              onChange={(value) =>
+                                commitNode(updateRouterClause(draft, ruleIndex, clauseIndex, { operator: value }))
+                              }
+                            />
+                            <InlineInput
+                              value={clause.value}
+                              placeholder="value"
+                              onChange={(value) =>
+                                setDraft(updateRouterClause(draft, ruleIndex, clauseIndex, { value }))
+                              }
+                              onCommit={(value) =>
+                                commitNode(updateRouterClause(draft, ruleIndex, clauseIndex, { value }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                     <button
                       type="button"
                       onClick={(event) => {
@@ -1275,41 +1315,17 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                           },
                         });
                       }}
-                      className="nodrag nopan ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
+                      className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  {(rule.clauses ?? []).map((clause, clauseIndex) => (
-                    <div key={`${rule.id}-${clauseIndex}`} className="mb-2 grid grid-cols-1 gap-2">
-                      <InlineSelect
-                        value={clause.source}
-                        options={ROUTER_SOURCES.map((item) => ({ value: item, label: item }))}
-                        onChange={(value) =>
-                          commitNode(updateRouterClause(draft, ruleIndex, clauseIndex, { source: value }))
-                        }
-                      />
-                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
-                        <InlineSelect
-                          value={clause.operator}
-                          options={CONDITION_OPERATORS.map((item) => ({ value: item, label: item }))}
-                          onChange={(value) =>
-                            commitNode(updateRouterClause(draft, ruleIndex, clauseIndex, { operator: value }))
-                          }
-                        />
-                        <InlineInput
-                          value={clause.value}
-                          placeholder="value"
-                          onChange={(value) =>
-                            setDraft(updateRouterClause(draft, ruleIndex, clauseIndex, { value }))
-                          }
-                          onCommit={(value) =>
-                            commitNode(updateRouterClause(draft, ruleIndex, clauseIndex, { value }))
-                          }
-                        />
-                      </div>
-                    </div>
-                  ))}
+                  <div className="mt-2 flex items-center gap-2 border-t border-zinc-200 pt-2">
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-zinc-400">Target</span>
+                    <span className="min-w-0 flex-1 truncate rounded-md bg-white px-2.5 py-1 text-[11px] text-zinc-700 ring-1 ring-zinc-200">
+                      {rule.target_node_id || "Drag to target"}
+                    </span>
+                  </div>
                 </div>
               ))}
               <button
@@ -1318,20 +1334,17 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   commitNode(addRouterRule(draft));
                 }}
-                className="nodrag nopan inline-flex h-9 w-full items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/60 text-sm text-zinc-700 transition hover:border-zinc-500 hover:text-zinc-900"
+                className="nodrag nopan inline-flex h-9 w-full items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 text-sm text-zinc-700 transition hover:border-zinc-400 hover:bg-white hover:text-zinc-900"
               >
                 Add Branch
               </button>
-              <div className="space-y-2 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-2">
-                <div className="flex items-center gap-2">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
-                    <span className="inline-flex h-2 w-2 rounded-full bg-white/90" />
-                    Fallback
-                  </div>
-                  <span className="min-w-0 truncate rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700">
-                    {draft.router?.fallback_node_id || "Drag to target"}
-                  </span>
-                </div>
+              <div className="flex items-center gap-2 border-t border-zinc-100 px-1 pt-2">
+                <span className="inline-flex h-7 items-center rounded-md bg-slate-100 px-2.5 text-[11px] font-medium text-slate-700">
+                  Fallback
+                </span>
+                <span className="min-w-0 flex-1 truncate rounded-md bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-700 ring-1 ring-zinc-200">
+                  {draft.router?.fallback_node_id || "Drag to target"}
+                </span>
               </div>
             </div>
           ) : null}
@@ -1378,26 +1391,24 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
           {draft.type === "code_runner" ? (
             <div className="space-y-2">
-              <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
-                <p className="line-clamp-4 text-[12px] leading-5 text-zinc-600">
+              <div className="px-1">
+                <div className="text-[11px] font-medium text-zinc-700">JavaScript Runtime</div>
+                <p className="mt-1 line-clamp-4 text-[12px] leading-5 text-zinc-600">
                   {describeCodeRunner(draft)}
                 </p>
                 {codeRunner ? (
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                    <span className="inline-flex rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700 ring-1 ring-emerald-200">
                       JavaScript
                     </span>
-                    <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+                    <span className="inline-flex rounded-full bg-zinc-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600 ring-1 ring-zinc-200">
                       {codeRunner.timeout_ms} ms
                     </span>
-                    <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+                    <span className="inline-flex rounded-full bg-zinc-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600 ring-1 ring-zinc-200">
                       {formatMemoryBytes(codeRunner.max_memory_bytes)}
                     </span>
                   </div>
                 ) : null}
-              </div>
-              <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-5 text-zinc-500">
-                Use the config button to edit code and runtime limits.
               </div>
             </div>
           ) : null}
@@ -1405,7 +1416,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
           {draft.type === "wasm_plugin" || draft.type === "match" ? (
             <div className="space-y-2">
               {draft.type === "wasm_plugin" && wasmRuntimeConfig && wasmSchemaFields.length > 0 ? (
-                <div className="space-y-3 rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
+                <div className="space-y-3 px-1">
                   {wasmSchemaFields.map((field) => {
                     const configObject = normalizePluginConfigObject(wasmRuntimeConfig.config);
                     const value = configObject[field.key];
@@ -1441,7 +1452,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                             onCommit={(nextValue) => commitFieldValue(nextValue)}
                           />
                         ) : field.type === "boolean" ? (
-                          <label className="inline-flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
+                          <label className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
                             <input
                               type="checkbox"
                               checked={Boolean(value)}
@@ -1471,17 +1482,33 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
 
           {draft.type === "match" ? (
             <div className="space-y-2">
-              <div className="rounded-xl border border-sky-200 bg-sky-50/70 px-2.5 py-2 text-[11px] text-sky-900">
-                Wasm decides the branch id. Drag each branch handle on the right edge to its target.
+              <div className="flex items-center justify-between px-1">
+                <div className="text-[11px] font-medium text-zinc-700">Branches</div>
+                <div className="text-[10px] text-zinc-500">Drag right handles to connect</div>
               </div>
               {(draft.match?.branches ?? []).map((branch, branchIndex) => (
-                <div key={branch.id} className="rounded-2xl border border-zinc-200/80 bg-white/70 p-2">
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="inline-flex items-center gap-2 rounded-full bg-sky-900 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
-                      <span className="inline-flex h-2 w-2 rounded-full bg-white/90" />
-                      Branch {branchIndex + 1}
+                <div key={branch.id} className="rounded-lg bg-zinc-50 px-2.5 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-7 min-w-10 items-center justify-center rounded-md bg-sky-50 px-2 text-[11px] font-medium text-sky-700">
+                      B{branchIndex + 1}
                     </span>
-                    <span className="min-w-0 truncate rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] text-sky-700">
+                    <div className="min-w-0 flex-1">
+                      <InlineInput
+                        value={branch.expr}
+                        placeholder='expr, e.g. ctx.header.x-target == "chat"'
+                        suggestions={data.templateSuggestions}
+                        onChange={(value) =>
+                          setDraft(updateWasmMatchBranch(draft, branchIndex, { expr: value }))
+                        }
+                        onCommit={(value) =>
+                          commitNode(updateWasmMatchBranch(draft, branchIndex, { expr: value }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 border-t border-zinc-200 pt-2">
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-zinc-400">Target</span>
+                    <span className="min-w-0 flex-1 truncate rounded-md bg-white px-2.5 py-1 text-[11px] text-zinc-700 ring-1 ring-zinc-200">
                       {branch.target_node_id || "Drag to target"}
                     </span>
                     <button
@@ -1497,22 +1524,11 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                           },
                         });
                       }}
-                      className="nodrag nopan ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
+                      className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <InlineInput
-                    value={branch.expr}
-                    placeholder='expr, e.g. ctx.header.x-target == "chat"'
-                    suggestions={data.templateSuggestions}
-                    onChange={(value) =>
-                      setDraft(updateWasmMatchBranch(draft, branchIndex, { expr: value }))
-                    }
-                    onCommit={(value) =>
-                      commitNode(updateWasmMatchBranch(draft, branchIndex, { expr: value }))
-                    }
-                  />
                 </div>
               ))}
               <button
@@ -1521,20 +1537,17 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   commitNode(addWasmMatchBranch(draft));
                 }}
-                className="nodrag nopan inline-flex h-9 w-full items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/60 text-sm text-zinc-700 transition hover:border-zinc-500 hover:text-zinc-900"
+                className="nodrag nopan inline-flex h-9 w-full items-center justify-center rounded-md border border-zinc-200 bg-white text-sm text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
               >
                 Add Branch
               </button>
-              <div className="space-y-2 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-2">
-                <div className="flex items-center gap-2">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
-                    <span className="inline-flex h-2 w-2 rounded-full bg-white/90" />
-                    Fallback
-                  </div>
-                  <span className="min-w-0 truncate rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700">
-                    {draft.match?.fallback_node_id || "Drag to target"}
-                  </span>
-                </div>
+              <div className="flex items-center gap-2 border-t border-zinc-100 px-1 pt-2">
+                <span className="inline-flex h-7 items-center rounded-md bg-slate-100 px-2.5 text-[11px] font-medium text-slate-700">
+                  Fallback
+                </span>
+                <span className="min-w-0 flex-1 truncate rounded-md bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-700 ring-1 ring-zinc-200">
+                  {draft.match?.fallback_node_id || "Drag to target"}
+                </span>
               </div>
             </div>
           ) : null}
@@ -3265,99 +3278,95 @@ function shortLabelForPlugin(name: string) {
 }
 
 function toneForManifestTone(tone: WasmPluginTone | null | undefined): NodeTone | null {
+  const neutralCard = {
+    cardBorder: "border-zinc-200",
+    cardBg: "bg-white",
+  };
   switch (tone) {
     case "slate":
       return {
-        cardBorder: "border-slate-300",
-        cardBg: "bg-slate-100/92",
-        chipBg: "bg-slate-200",
-        chipText: "text-slate-900",
+        ...neutralCard,
+        chipBg: "bg-slate-100",
+        chipText: "text-slate-700",
         icon: "text-slate-700",
-        libraryButton: "border-slate-300 text-slate-800 hover:border-slate-500 hover:text-slate-950",
+        libraryButton: "border-zinc-200 bg-white text-slate-700 hover:border-zinc-300 hover:text-slate-950",
         minimap: "#64748b",
         handle: "#64748b",
         edge: "#64748b",
       };
     case "blue":
       return {
-        cardBorder: "border-blue-300",
-        cardBg: "bg-blue-100/92",
-        chipBg: "bg-blue-200",
-        chipText: "text-blue-950",
+        ...neutralCard,
+        chipBg: "bg-blue-50",
+        chipText: "text-blue-700",
         icon: "text-blue-700",
-        libraryButton: "border-blue-300 text-blue-800 hover:border-blue-500 hover:text-blue-950",
+        libraryButton: "border-zinc-200 bg-white text-blue-700 hover:border-zinc-300 hover:text-blue-950",
         minimap: "#2563eb",
         handle: "#2563eb",
         edge: "#2563eb",
       };
     case "sky":
       return {
-        cardBorder: "border-sky-300",
-        cardBg: "bg-sky-100/92",
-        chipBg: "bg-sky-200",
-        chipText: "text-sky-950",
+        ...neutralCard,
+        chipBg: "bg-sky-50",
+        chipText: "text-sky-700",
         icon: "text-sky-700",
-        libraryButton: "border-sky-300 text-sky-800 hover:border-sky-500 hover:text-sky-950",
+        libraryButton: "border-zinc-200 bg-white text-sky-700 hover:border-zinc-300 hover:text-sky-950",
         minimap: "#0284c7",
         handle: "#0284c7",
         edge: "#0284c7",
       };
     case "teal":
       return {
-        cardBorder: "border-teal-300",
-        cardBg: "bg-teal-100/92",
-        chipBg: "bg-teal-200",
-        chipText: "text-teal-950",
+        ...neutralCard,
+        chipBg: "bg-teal-50",
+        chipText: "text-teal-700",
         icon: "text-teal-700",
-        libraryButton: "border-teal-300 text-teal-800 hover:border-teal-500 hover:text-teal-950",
+        libraryButton: "border-zinc-200 bg-white text-teal-700 hover:border-zinc-300 hover:text-teal-950",
         minimap: "#0f766e",
         handle: "#0f766e",
         edge: "#0f766e",
       };
     case "emerald":
       return {
-        cardBorder: "border-emerald-300",
-        cardBg: "bg-emerald-100/92",
-        chipBg: "bg-emerald-200",
-        chipText: "text-emerald-950",
+        ...neutralCard,
+        chipBg: "bg-emerald-50",
+        chipText: "text-emerald-700",
         icon: "text-emerald-700",
-        libraryButton: "border-emerald-300 text-emerald-800 hover:border-emerald-500 hover:text-emerald-950",
+        libraryButton: "border-zinc-200 bg-white text-emerald-700 hover:border-zinc-300 hover:text-emerald-950",
         minimap: "#10b981",
         handle: "#10b981",
         edge: "#10b981",
       };
     case "amber":
       return {
-        cardBorder: "border-amber-300",
-        cardBg: "bg-amber-100/92",
-        chipBg: "bg-amber-200",
-        chipText: "text-amber-950",
+        ...neutralCard,
+        chipBg: "bg-amber-50",
+        chipText: "text-amber-700",
         icon: "text-amber-700",
-        libraryButton: "border-amber-300 text-amber-800 hover:border-amber-500 hover:text-amber-950",
+        libraryButton: "border-zinc-200 bg-white text-amber-700 hover:border-zinc-300 hover:text-amber-950",
         minimap: "#d97706",
         handle: "#d97706",
         edge: "#d97706",
       };
     case "rose":
       return {
-        cardBorder: "border-rose-300",
-        cardBg: "bg-rose-100/92",
-        chipBg: "bg-rose-200",
-        chipText: "text-rose-950",
+        ...neutralCard,
+        chipBg: "bg-rose-50",
+        chipText: "text-rose-700",
         icon: "text-rose-700",
-        libraryButton: "border-rose-300 text-rose-800 hover:border-rose-500 hover:text-rose-950",
+        libraryButton: "border-zinc-200 bg-white text-rose-700 hover:border-zinc-300 hover:text-rose-950",
         minimap: "#e11d48",
         handle: "#e11d48",
         edge: "#e11d48",
       };
     case "violet":
       return {
-        cardBorder: "border-violet-300",
-        cardBg: "bg-violet-100/92",
-        chipBg: "bg-violet-200",
-        chipText: "text-violet-950",
+        ...neutralCard,
+        chipBg: "bg-violet-50",
+        chipText: "text-violet-700",
         icon: "text-violet-700",
-        libraryButton: "border-violet-300 text-violet-800 hover:border-violet-500 hover:text-violet-950",
+        libraryButton: "border-zinc-200 bg-white text-violet-700 hover:border-zinc-300 hover:text-violet-950",
         minimap: "#7c3aed",
         handle: "#7c3aed",
         edge: "#7c3aed",
@@ -3398,219 +3407,206 @@ function toneForGraphNode(
 }
 
 function toneForNodeType(type: RuleGraphNodeType): NodeTone {
+  const neutralCard = {
+    cardBorder: "border-zinc-200",
+    cardBg: "bg-white",
+  };
   switch (type) {
     case "start":
       return {
-        cardBorder: "border-zinc-300",
-        cardBg: "bg-zinc-200/95",
+        ...neutralCard,
         chipBg: "bg-zinc-900",
         chipText: "text-white",
         icon: "text-zinc-700",
-        libraryButton: "border-zinc-200 text-zinc-700 hover:border-zinc-900 hover:text-zinc-900",
+        libraryButton: "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:text-zinc-900",
         minimap: "#111827",
         handle: "#111827",
         edge: "#111827",
       };
     case "condition":
       return {
-        cardBorder: "border-violet-300",
-        cardBg: "bg-violet-200/88",
-        chipBg: "bg-violet-100",
-        chipText: "text-violet-800",
+        ...neutralCard,
+        chipBg: "bg-violet-50",
+        chipText: "text-violet-700",
         icon: "text-violet-600",
-        libraryButton: "border-violet-200 text-violet-700 hover:border-violet-500 hover:text-violet-900",
+        libraryButton: "border-zinc-200 bg-white text-violet-700 hover:border-zinc-300 hover:text-violet-900",
         minimap: "#7c3aed",
         handle: "#7c3aed",
         edge: "#7c3aed",
       };
     case "select_model":
       return {
-        cardBorder: "border-blue-300",
-        cardBg: "bg-blue-200/90",
-        chipBg: "bg-blue-100",
-        chipText: "text-blue-800",
+        ...neutralCard,
+        chipBg: "bg-blue-50",
+        chipText: "text-blue-700",
         icon: "text-blue-600",
-        libraryButton: "border-blue-200 text-blue-700 hover:border-blue-500 hover:text-blue-900",
+        libraryButton: "border-zinc-200 bg-white text-blue-700 hover:border-zinc-300 hover:text-blue-900",
         minimap: "#2563eb",
         handle: "#2563eb",
         edge: "#2563eb",
       };
     case "route_provider":
       return {
-        cardBorder: "border-cyan-300",
-        cardBg: "bg-cyan-200/86",
-        chipBg: "bg-cyan-100",
-        chipText: "text-cyan-900",
+        ...neutralCard,
+        chipBg: "bg-cyan-50",
+        chipText: "text-cyan-800",
         icon: "text-cyan-700",
-        libraryButton: "border-cyan-200 text-cyan-800 hover:border-cyan-500 hover:text-cyan-950",
+        libraryButton: "border-zinc-200 bg-white text-cyan-800 hover:border-zinc-300 hover:text-cyan-950",
         minimap: "#0ea5e9",
         handle: "#0ea5e9",
         edge: "#0ea5e9",
       };
     case "rewrite_path":
       return {
-        cardBorder: "border-amber-300",
-        cardBg: "bg-amber-200/88",
-        chipBg: "bg-amber-100",
-        chipText: "text-amber-800",
+        ...neutralCard,
+        chipBg: "bg-amber-50",
+        chipText: "text-amber-700",
         icon: "text-amber-600",
-        libraryButton: "border-amber-200 text-amber-700 hover:border-amber-500 hover:text-amber-900",
+        libraryButton: "border-zinc-200 bg-white text-amber-700 hover:border-zinc-300 hover:text-amber-900",
         minimap: "#d97706",
         handle: "#d97706",
         edge: "#d97706",
       };
     case "set_context":
       return {
-        cardBorder: "border-fuchsia-300",
-        cardBg: "bg-fuchsia-100/92",
-        chipBg: "bg-fuchsia-200",
-        chipText: "text-fuchsia-900",
+        ...neutralCard,
+        chipBg: "bg-fuchsia-50",
+        chipText: "text-fuchsia-700",
         icon: "text-fuchsia-700",
-        libraryButton: "border-fuchsia-300 text-fuchsia-800 hover:border-fuchsia-500 hover:text-fuchsia-950",
+        libraryButton: "border-zinc-200 bg-white text-fuchsia-800 hover:border-zinc-300 hover:text-fuchsia-950",
         minimap: "#c026d3",
         handle: "#c026d3",
         edge: "#c026d3",
       };
     case "router":
       return {
-        cardBorder: "border-indigo-300",
-        cardBg: "bg-indigo-100/92",
-        chipBg: "bg-indigo-200",
-        chipText: "text-indigo-900",
+        ...neutralCard,
+        chipBg: "bg-indigo-50",
+        chipText: "text-indigo-700",
         icon: "text-indigo-700",
-        libraryButton: "border-indigo-300 text-indigo-800 hover:border-indigo-500 hover:text-indigo-950",
+        libraryButton: "border-zinc-200 bg-white text-indigo-800 hover:border-zinc-300 hover:text-indigo-950",
         minimap: "#4f46e5",
         handle: "#4f46e5",
         edge: "#4f46e5",
       };
     case "log":
       return {
-        cardBorder: "border-cyan-300",
-        cardBg: "bg-cyan-100/92",
-        chipBg: "bg-cyan-200",
-        chipText: "text-cyan-900",
+        ...neutralCard,
+        chipBg: "bg-cyan-50",
+        chipText: "text-cyan-800",
         icon: "text-cyan-700",
-        libraryButton: "border-cyan-300 text-cyan-800 hover:border-cyan-500 hover:text-cyan-950",
+        libraryButton: "border-zinc-200 bg-white text-cyan-800 hover:border-zinc-300 hover:text-cyan-950",
         minimap: "#0891b2",
         handle: "#0891b2",
         edge: "#0891b2",
       };
     case "set_header":
       return {
-        cardBorder: "border-emerald-300",
-        cardBg: "bg-emerald-200/88",
-        chipBg: "bg-emerald-100",
-        chipText: "text-emerald-800",
+        ...neutralCard,
+        chipBg: "bg-emerald-50",
+        chipText: "text-emerald-700",
         icon: "text-emerald-600",
-        libraryButton: "border-emerald-200 text-emerald-700 hover:border-emerald-500 hover:text-emerald-900",
+        libraryButton: "border-zinc-200 bg-white text-emerald-700 hover:border-zinc-300 hover:text-emerald-900",
         minimap: "#059669",
         handle: "#059669",
         edge: "#059669",
       };
     case "set_header_if_absent":
       return {
-        cardBorder: "border-lime-300",
-        cardBg: "bg-lime-200/88",
-        chipBg: "bg-lime-100",
-        chipText: "text-lime-800",
+        ...neutralCard,
+        chipBg: "bg-lime-50",
+        chipText: "text-lime-700",
         icon: "text-lime-600",
-        libraryButton: "border-lime-200 text-lime-700 hover:border-lime-500 hover:text-lime-900",
+        libraryButton: "border-zinc-200 bg-white text-lime-700 hover:border-zinc-300 hover:text-lime-900",
         minimap: "#65a30d",
         handle: "#65a30d",
         edge: "#65a30d",
       };
     case "remove_header":
       return {
-        cardBorder: "border-rose-300",
-        cardBg: "bg-rose-200/88",
-        chipBg: "bg-rose-100",
-        chipText: "text-rose-800",
+        ...neutralCard,
+        chipBg: "bg-rose-50",
+        chipText: "text-rose-700",
         icon: "text-rose-600",
-        libraryButton: "border-rose-200 text-rose-700 hover:border-rose-500 hover:text-rose-900",
+        libraryButton: "border-zinc-200 bg-white text-rose-700 hover:border-zinc-300 hover:text-rose-900",
         minimap: "#e11d48",
         handle: "#e11d48",
         edge: "#e11d48",
       };
     case "copy_header":
       return {
-        cardBorder: "border-orange-300",
-        cardBg: "bg-orange-200/88",
-        chipBg: "bg-orange-100",
-        chipText: "text-orange-800",
+        ...neutralCard,
+        chipBg: "bg-orange-50",
+        chipText: "text-orange-700",
         icon: "text-orange-600",
-        libraryButton: "border-orange-200 text-orange-700 hover:border-orange-500 hover:text-orange-900",
+        libraryButton: "border-zinc-200 bg-white text-orange-700 hover:border-zinc-300 hover:text-orange-900",
         minimap: "#ea580c",
         handle: "#ea580c",
         edge: "#ea580c",
       };
     case "note":
       return {
-        cardBorder: "border-amber-300",
-        cardBg: "bg-amber-100/95",
-        chipBg: "bg-amber-200",
+        cardBorder: "border-amber-200",
+        cardBg: "bg-amber-50",
+        chipBg: "bg-amber-100",
         chipText: "text-amber-900",
         icon: "text-amber-700",
-        libraryButton: "border-amber-300 text-amber-800 hover:border-amber-500 hover:text-amber-950",
+        libraryButton: "border-zinc-200 bg-white text-amber-800 hover:border-zinc-300 hover:text-amber-950",
         minimap: "#f59e0b",
         handle: "#f59e0b",
         edge: "#f59e0b",
       };
     case "wasm_plugin":
       return {
-        cardBorder: "border-teal-300",
-        cardBg: "bg-teal-100/92",
-        chipBg: "bg-teal-200",
-        chipText: "text-teal-950",
+        ...neutralCard,
+        chipBg: "bg-teal-50",
+        chipText: "text-teal-700",
         icon: "text-teal-700",
-        libraryButton: "border-teal-300 text-teal-800 hover:border-teal-500 hover:text-teal-950",
+        libraryButton: "border-zinc-200 bg-white text-teal-800 hover:border-zinc-300 hover:text-teal-950",
         minimap: "#0f766e",
         handle: "#0f766e",
         edge: "#0f766e",
       };
     case "match":
       return {
-        cardBorder: "border-sky-300",
-        cardBg: "bg-sky-100/92",
-        chipBg: "bg-sky-200",
-        chipText: "text-sky-950",
+        ...neutralCard,
+        chipBg: "bg-sky-50",
+        chipText: "text-sky-700",
         icon: "text-sky-700",
-        libraryButton: "border-sky-300 text-sky-800 hover:border-sky-500 hover:text-sky-950",
+        libraryButton: "border-zinc-200 bg-white text-sky-800 hover:border-zinc-300 hover:text-sky-950",
         minimap: "#0284c7",
         handle: "#0284c7",
         edge: "#0284c7",
       };
     case "code_runner":
       return {
-        cardBorder: "border-emerald-300",
-        cardBg: "bg-emerald-100/92",
-        chipBg: "bg-emerald-200",
-        chipText: "text-emerald-950",
+        ...neutralCard,
+        chipBg: "bg-emerald-50",
+        chipText: "text-emerald-700",
         icon: "text-emerald-700",
-        libraryButton: "border-emerald-300 text-emerald-800 hover:border-emerald-500 hover:text-emerald-950",
+        libraryButton: "border-zinc-200 bg-white text-emerald-800 hover:border-zinc-300 hover:text-emerald-950",
         minimap: "#10b981",
         handle: "#10b981",
         edge: "#10b981",
       };
     case "end":
       return {
-        cardBorder: "border-slate-300",
-        cardBg: "bg-slate-200/90",
-        chipBg: "bg-slate-200",
+        ...neutralCard,
+        chipBg: "bg-slate-100",
         chipText: "text-slate-800",
         icon: "text-slate-600",
-        libraryButton: "border-slate-200 text-slate-700 hover:border-slate-500 hover:text-slate-900",
+        libraryButton: "border-zinc-200 bg-white text-slate-700 hover:border-zinc-300 hover:text-slate-900",
         minimap: "#475569",
         handle: "#475569",
         edge: "#475569",
       };
     default:
       return {
-        cardBorder: "border-zinc-300",
-        cardBg: "bg-zinc-100/90",
-        chipBg: "bg-zinc-200",
+        ...neutralCard,
+        chipBg: "bg-zinc-100",
         chipText: "text-zinc-900",
         icon: "text-zinc-700",
-        libraryButton: "border-zinc-200 text-zinc-700 hover:border-zinc-500 hover:text-zinc-900",
+        libraryButton: "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:text-zinc-900",
         minimap: "#71717a",
         handle: "#71717a",
         edge: "#71717a",
@@ -3935,10 +3931,10 @@ function InlineInput({
           setCompletion(null);
           onCommit(event.target.value);
         }}
-        className="nodrag nopan nowheel h-9 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+        className="nodrag nopan nowheel h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100"
       />
       {completion ? (
-        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-xl border border-zinc-200 bg-white/95 shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur">
+        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg">
           {completion.items.slice(0, 8).map((suggestion, index) => (
             <button
               key={suggestion}
@@ -4076,10 +4072,10 @@ function InlineTextarea({
           setCompletion(null);
           onCommit(event.target.value);
         }}
-        className="nodrag nopan nowheel w-full resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+        className="nodrag nopan nowheel w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100"
       />
       {completion ? (
-        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-xl border border-zinc-200 bg-white/95 shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur">
+        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg">
           {completion.items.slice(0, 8).map((suggestion, index) => (
             <button
               key={suggestion}
@@ -4120,7 +4116,7 @@ function InlineSelect({
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
       onChange={(event) => onChange(event.target.value)}
-      className="nodrag nopan nowheel h-9 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400"
+      className="nodrag nopan nowheel h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100"
     >
       <option value="">{placeholder ?? "Select..."}</option>
       {options.map((option) => (
