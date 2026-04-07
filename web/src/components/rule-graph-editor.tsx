@@ -537,7 +537,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   return (
     <>
       <div className="min-w-0">
-        <div className="rule-graph-canvas h-[calc(100dvh-8.75rem)] min-h-[560px] rounded-[24px] bg-zinc-50">
+        <div className="rule-graph-canvas h-[calc(100dvh-6.5rem)] min-h-[680px] rounded-[24px] border border-zinc-200 bg-zinc-50 shadow-sm">
           <ReactFlow
             nodes={canvasNodes}
             edges={flowEdges}
@@ -617,11 +617,11 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           />
 
           <Panel position="top-left" className="!m-4">
-            <div className="rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
-              <div className="mb-2 px-2 pt-1 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-500">
-                Nodes
+            <div className="w-[76px] rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm">
+              <div className="mb-2 px-1 text-center text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+                Library
               </div>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 xl:grid-cols-1">
+              <div className="grid grid-cols-1 gap-2">
                 {nodeLibrary.map((item) => (
                   <button
                     key={`${item.type}:${item.pluginId ?? item.label}`}
@@ -637,7 +637,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
                       event.dataTransfer.effectAllowed = "move";
                     }}
                     className={[
-                      "group relative flex h-12 min-w-[54px] items-center justify-center rounded-xl border bg-white transition",
+                      "group relative flex h-12 w-full items-center justify-center rounded-xl border bg-white transition",
                       toneForLibraryItem(item).libraryButton,
                     ].join(" ")}
                   >
@@ -657,28 +657,21 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           </Panel>
 
           <Panel position="top-right" className="!m-4">
-            <div
-              className={[
-                "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium backdrop-blur",
-                validationBadgeTone,
-              ].join(" ")}
-              title={validationBadgeTitle}
-            >
+            <div title={validationBadgeTitle}>
               <span
                 className={[
-                  "inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-black",
-                  validationIssueCount > 0 ? "bg-rose-600 text-white" : "bg-emerald-600 text-white",
+                  "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium shadow-sm",
+                  validationBadgeTone,
                 ].join(" ")}
               >
-                {validationIssueCount > 0 ? "!" : "✓"}
+                {validationBadgeText}
               </span>
-              <span className="whitespace-nowrap">{validationBadgeText}</span>
             </div>
           </Panel>
 
           <Panel position="bottom-left" className="!m-4">
-            <div className="rounded-lg bg-white/82 px-3 py-2 text-xs text-zinc-600 shadow-[0_10px_30px_rgba(15,23,42,0.1)] backdrop-blur">
-              Drag from the node dock or click an icon to insert a step.
+            <div className="rounded-lg bg-white/90 px-2.5 py-1.5 text-[11px] text-zinc-500 shadow-sm">
+              Drag or click to add
             </div>
           </Panel>
           </ReactFlow>

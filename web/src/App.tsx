@@ -263,18 +263,34 @@ export default function App() {
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <div className="flex min-h-screen flex-col">
-        <header className="border-b border-zinc-200/80 bg-white/75 px-4 py-3 backdrop-blur-md">
+        <header
+          className={[
+            "border-b border-zinc-200/80 bg-white/75 backdrop-blur-md",
+            openedWorkflow ? "px-3 py-2" : "px-4 py-3",
+          ].join(" ")}
+        >
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
             <div className="min-w-0">
-              <Badge>gateway switch</Badge>
-              <div className="mt-2 min-w-0">
-                <h1 className="truncate font-mono text-xl font-semibold tracking-tight">
-                  LLM Gateway
-                </h1>
-                <p className="mt-0.5 truncate text-sm text-zinc-500">
-                  Workflow gallery for opening, activating, and editing rule graph canvases.
-                </p>
-              </div>
+              {openedWorkflow ? (
+                <div className="flex min-w-0 items-center gap-2">
+                  <Badge>editing</Badge>
+                  <div className="truncate text-sm font-medium text-zinc-900">
+                    {openedWorkflowSummary?.name ?? openedWorkflowId ?? "Workflow"}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <Badge>gateway switch</Badge>
+                  <div className="mt-2 min-w-0">
+                    <h1 className="truncate font-mono text-xl font-semibold tracking-tight">
+                      LLM Gateway
+                    </h1>
+                    <p className="mt-0.5 truncate text-sm text-zinc-500">
+                      Workflow gallery for opening, activating, and editing rule graph canvases.
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <TopBarButton label="Settings" onClick={openSettings}>
@@ -288,15 +304,17 @@ export default function App() {
               </TopBarButton>
             </div>
           </div>
-          <div className="mx-auto mt-2 flex max-w-7xl items-center justify-start">
-            <div className={`status-chip ${busy ? "status-chip-busy" : ""}`}>
-              <span className={`status-dot ${busy ? "status-dot-busy" : ""}`} />
-              <span className="min-w-0 truncate">{status}</span>
+          {!openedWorkflow ? (
+            <div className="mx-auto mt-2 flex max-w-7xl items-center justify-start">
+              <div className={`status-chip ${busy ? "status-chip-busy" : ""}`}>
+                <span className={`status-dot ${busy ? "status-dot-busy" : ""}`} />
+                <span className="min-w-0 truncate">{status}</span>
+              </div>
             </div>
-          </div>
+          ) : null}
         </header>
 
-        <main className="flex-1 px-3 pb-3 pt-2 lg:px-4">
+        <main className={openedWorkflow ? "flex-1 px-2 pb-2 pt-2 lg:px-3" : "flex-1 px-3 pb-3 pt-2 lg:px-4"}>
           {openedWorkflow && openedWorkflowSummary ? (
             <WorkflowEditorShell
               summary={openedWorkflowSummary}
@@ -475,41 +493,23 @@ function WorkflowEditorShell({
   onSetActive: () => void;
 }) {
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-3">
-      <section className="rounded-[24px] border border-zinc-200 bg-white/88 px-4 py-4 shadow-[0_20px_50px_rgba(15,23,42,0.06)] backdrop-blur">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" className="gap-2" onClick={onBack}>
-                <ArrowLeft className="h-4 w-4" />
-                Back to Gallery
-              </Button>
-              {summary.is_active ? <Badge>Active Workflow</Badge> : <Badge variant="secondary">Inactive</Badge>}
-            </div>
-            <h2 className="mt-3 truncate text-2xl font-semibold tracking-tight text-zinc-950">
-              {summary.name}
-            </h2>
-            <p className="mt-1 text-sm text-zinc-600">
-              {summary.description?.trim() || "This workflow does not have a description yet."}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-500">
-              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 font-mono">
-                {summary.id}
-              </span>
-              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 font-mono">
-                {summary.file}
-              </span>
-            </div>
-          </div>
-          {!summary.is_active ? (
-            <Button variant="outline" className="gap-2 self-start lg:self-auto" onClick={onSetActive}>
-              <CheckCircle2 className="h-4 w-4" />
-              Set Active
-            </Button>
-          ) : null}
+    <div className="mx-auto flex max-w-7xl flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" className="gap-2" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Button>
+          {summary.is_active ? <Badge>Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
+          <span className="hidden font-mono text-xs text-zinc-500 md:inline">{summary.id}</span>
         </div>
-      </section>
-
+        {!summary.is_active ? (
+          <Button variant="outline" size="sm" className="gap-2" onClick={onSetActive}>
+            <CheckCircle2 className="h-4 w-4" />
+            Set Active
+          </Button>
+        ) : null}
+      </div>
       <RuleGraphEditor config={config} setConfig={setConfig} pluginManifests={pluginManifests} />
     </div>
   );
