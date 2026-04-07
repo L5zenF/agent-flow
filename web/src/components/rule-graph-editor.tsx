@@ -889,20 +889,21 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
             <div className="pointer-events-none absolute right-0 top-0 h-10 w-10 rounded-tr-2xl bg-amber-100 [clip-path:polygon(100%_0,0_0,100%_100%)]" />
           </>
         ) : null}
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-100 pb-3">
           <div className="min-w-0">
             <div
               className={[
-                "inline-flex rounded-md px-2.5 py-1 text-[11px] font-medium",
+                "inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-medium",
                 isNoteNode ? "bg-amber-100 text-amber-900" : "",
                 tone.chipBg,
                 tone.chipText,
               ].join(" ")}
             >
-              {labelForNode(draft, data.pluginManifest)}
+              <span className={tone.icon}>{icon}</span>
+              <span className="truncate">{labelForNode(draft, data.pluginManifest)}</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1">
             {data.nodeType === "code_runner" ? (
               <button
                 type="button"
@@ -910,11 +911,11 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   data.onOpenCodeRunnerConfig();
                 }}
-                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+                className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-900"
                 aria-label="Configure code runner"
                 title="Configure code runner"
               >
-                <FileCode2 className="h-4 w-4" />
+                <FileCode2 className="h-3.5 w-3.5" />
               </button>
             ) : data.nodeType === "wasm_plugin" || data.nodeType === "match" ? (
               <>
@@ -924,22 +925,22 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                     event.stopPropagation();
                     data.onOpenWasmConfig();
                   }}
-                  className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+                  className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-900"
                   aria-label="Configure plugin permissions"
                   title="Configure permissions"
                 >
-                  <Puzzle className="h-4 w-4" />
+                  <Puzzle className="h-3.5 w-3.5" />
                 </button>
                 <div className="group relative">
                   <button
                     type="button"
                     tabIndex={-1}
                     onClick={(event) => event.preventDefault()}
-                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700"
+                    className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-zinc-700"
                     aria-label="Show plugin details"
                     title="Plugin details"
                   >
-                    <CircleHelp className="h-4 w-4" />
+                    <CircleHelp className="h-3.5 w-3.5" />
                   </button>
                   <div className="pointer-events-none absolute right-0 top-[calc(100%+10px)] z-30 hidden w-64 rounded-xl border border-zinc-200 bg-white p-3 text-left shadow-lg group-hover:block">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
@@ -988,7 +989,7 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                 </div>
               </>
             ) : (
-              <div className={tone.icon}>{icon}</div>
+              <div className={`inline-flex h-7 w-7 items-center justify-center rounded-md bg-white shadow-sm ${tone.icon}`}>{icon}</div>
             )}
             {selected && draft.type !== "start" ? (
               <button
@@ -997,15 +998,15 @@ const RuleCanvasNode = memo(function RuleCanvasNode({ data, selected }: NodeProp
                   event.stopPropagation();
                   data.onDeleteNode();
                 }}
-                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-rose-200 hover:text-rose-600"
+                className="nodrag nopan inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-zinc-500 shadow-sm transition hover:text-rose-600"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-3.5 w-3.5" />
               </button>
             ) : null}
           </div>
         </div>
 
-        <div className="mt-3 space-y-2">
+        <div className="mt-3 space-y-3">
           {draft.type === "note" ? (
             isEditingNote ? (
               <textarea
@@ -2196,7 +2197,7 @@ function InspectorSection({
 }
 
 function FieldLabel({ label }: { label: string }) {
-  return <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">{label}</div>;
+  return <div className="text-[11px] font-medium tracking-[0.01em] text-zinc-600">{label}</div>;
 }
 
 const RuleCanvasEdge = memo(function RuleCanvasEdge({
