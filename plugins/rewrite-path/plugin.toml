@@ -1,0 +1,17 @@
+id = "rewrite-path"
+name = "Rewrite Path"
+version = "0.1.0"
+description = "Rewrites the upstream request path inside a wasm step."
+supported_output_ports = ["default"]
+capabilities = ["log"]
+
+[ui]
+icon = "route"
+category = "transform"
+tone = "amber"
+order = 30
+tags = ["path", "rewrite"]
+
+[default_config_schema_hints]
+path_rewrite = "Target path, for example /v1/chat/completions"
+log_message = "Optional log line."

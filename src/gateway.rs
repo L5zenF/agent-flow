@@ -12,13 +12,13 @@ use axum::http::header::{CONNECTION, HOST};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
 use reqwest::Client;
-use rquickjs::{Context as JsContext, Runtime as JsRuntime};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use url::Url;
-use wasmtime::component::{Linker, ResourceTable};
-use wasmtime::{Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::component::{Linker as ComponentLinker, ResourceTable};
+use wasmtime::{Linker as CoreLinker, Memory, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::sockets::SocketAddrUse;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
@@ -168,6 +168,22 @@ struct CodeRunnerModel<'a> {
     provider_id: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoreCodeRunnerRequest<'a> {
+    code: String,
+    input: CodeRunnerInput<'a>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CoreCodeRunnerResponse {
+    ok: bool,
+    #[serde(default)]
+    json: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodeRunnerOutput {
@@ -226,7 +242,6 @@ trait PluginNodeRuntime {
 }
 
 struct WasmtimePluginRuntime;
-struct QuickJsCodeRunnerRuntime;
 
 struct PluginStoreData {
     limits: StoreLimits,
@@ -234,8 +249,15 @@ struct PluginStoreData {
     wasi: WasiCtx,
 }
 
+struct CorePluginStoreData {
+    limits: StoreLimits,
+    wasi: WasiP1Ctx,
+}
+
 static WASMTIME_PLUGIN_RUNTIME: WasmtimePluginRuntime = WasmtimePluginRuntime;
-static QUICKJS_CODE_RUNNER_RUNTIME: QuickJsCodeRunnerRuntime = QuickJsCodeRunnerRuntime;
+const SELECTED_PROVIDER_CONTEXT_KEY: &str = "selection.provider_id";
+const SELECTED_MODEL_CONTEXT_KEY: &str = "selection.model_id";
+const CODE_RUNNER_PLUGIN_ID: &str = "js-code-runner";
 
 impl WasiView for PluginStoreData {
     fn ctx(&mut self) -> WasiCtxView<'_> {
@@ -302,7 +324,7 @@ impl PluginNodeRuntime for WasmtimePluginRuntime {
         node_config: &WasmPluginNodeConfig,
         input: &RuntimeExecuteInput,
     ) -> Result<RuntimeExecuteOutput, String> {
-        let mut linker = Linker::new(plugin.component().engine());
+        let mut linker = ComponentLinker::new(plugin.component().engine());
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(|error| {
             format!(
                 "failed to wire WASI imports for plugin '{}': {error}",
@@ -365,56 +387,147 @@ impl PluginNodeRuntime for WasmtimePluginRuntime {
     }
 }
 
-impl QuickJsCodeRunnerRuntime {
-    fn execute(
-        &self,
-        node_id: &str,
-        node_config: &CodeRunnerNodeConfig,
-        input: &RuntimeExecuteInput,
-    ) -> Result<RuntimeExecuteOutput, String> {
-        let js_runtime = JsRuntime::new().map_err(|error| {
-            format!("code_runner node '{node_id}' failed to initialize runtime: {error}")
-        })?;
-        js_runtime.set_memory_limit(node_config.max_memory_bytes as usize);
+fn execute_core_code_runner_plugin(
+    plugin: &LoadedPlugin,
+    node_id: &str,
+    node_config: &CodeRunnerNodeConfig,
+    input: &RuntimeExecuteInput,
+) -> Result<RuntimeExecuteOutput, String> {
+    let mut linker = CoreLinker::new(plugin.module().engine());
+    wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |state: &mut CorePluginStoreData| {
+        &mut state.wasi
+    })
+    .map_err(|error| {
+        format!(
+            "failed to wire WASI imports for code_runner plugin '{}': {error}",
+            plugin.plugin_id()
+        )
+    })?;
+    let limits = StoreLimitsBuilder::new()
+        .memory_size(
+            node_config
+                .max_memory_bytes
+                .try_into()
+                .unwrap_or(usize::MAX),
+        )
+        .trap_on_grow_failure(true)
+        .build();
+    let mut store = Store::new(
+        plugin.module().engine(),
+        CorePluginStoreData {
+            limits,
+            wasi: WasiCtxBuilder::new().build_p1(),
+        },
+    );
+    store.limiter(|state| &mut state.limits);
+    store
+        .set_fuel(u64::MAX)
+        .map_err(|error| format!("failed to set code_runner fuel budget: {error}"))?;
+    store.set_epoch_deadline(1);
+    store.epoch_deadline_trap();
 
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_millis(node_config.timeout_ms);
-        js_runtime.set_interrupt_handler(Some(Box::new(move || start.elapsed() >= timeout)));
-
-        let js_context = JsContext::full(&js_runtime).map_err(|error| {
-            format!("code_runner node '{node_id}' failed to initialize context: {error}")
-        })?;
-        let input_json =
-            serde_json::to_string(&build_code_runner_input(input)).map_err(|error| {
-                format!("code_runner node '{node_id}' failed to serialize input: {error}")
-            })?;
-        let script = normalize_code_runner_source(node_config.code.as_str());
-
-        js_context.with(|ctx| -> Result<RuntimeExecuteOutput, String> {
-            let globals = ctx.globals();
-            globals
-                .set("__code_runner_input_json", input_json.as_str())
-                .map_err(|error| {
-                    format!("code_runner node '{node_id}' failed to install input: {error}")
-                })?;
-            ctx.eval::<(), _>(script.as_str()).map_err(|error| {
-                format!("code_runner node '{node_id}' execution failed: {error}")
-            })?;
-            ctx.eval::<String, _>(
-                r#"
-                (() => {
-                  if (typeof run !== "function") {
-                    throw new Error("code_runner must define function run(input)");
-                  }
-                  const input = JSON.parse(globalThis.__code_runner_input_json);
-                  return JSON.stringify(run(input) ?? {});
-                })()
-                "#,
+    let instance = linker
+        .instantiate(&mut store, plugin.module())
+        .map_err(|error| {
+            format!(
+                "failed to instantiate code_runner plugin '{}': {error}",
+                plugin.plugin_id()
             )
-            .map_err(|error| format!("code_runner node '{node_id}' execution failed: {error}"))
-            .and_then(|json| parse_code_runner_output(node_id, json.as_str()))
-        })
+        })?;
+    let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
+        format!(
+            "code_runner plugin '{}' is missing exported memory",
+            plugin.plugin_id()
+        )
+    })?;
+    let alloc = instance
+        .get_typed_func::<u32, u32>(&mut store, "alloc")
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' is missing alloc export: {error}",
+                plugin.plugin_id()
+            )
+        })?;
+    let dealloc = instance
+        .get_typed_func::<(u32, u32), ()>(&mut store, "dealloc")
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' is missing dealloc export: {error}",
+                plugin.plugin_id()
+            )
+        })?;
+    let run_json = instance
+        .get_typed_func::<(u32, u32), u64>(&mut store, "run_json")
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' is missing run_json export: {error}",
+                plugin.plugin_id()
+            )
+        })?;
+
+    let request_json = serde_json::to_vec(&CoreCodeRunnerRequest {
+        code: normalize_code_runner_source(node_config.code.as_str()),
+        input: build_code_runner_input(input),
+    })
+    .map_err(|error| format!("code_runner node '{node_id}' failed to serialize input: {error}"))?;
+    let _timeout_guard = TimeoutEpochGuard::start(
+        plugin.module().engine().clone(),
+        Duration::from_millis(node_config.timeout_ms),
+    );
+    let request_ptr = alloc
+        .call(&mut store, request_json.len() as u32)
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' failed to allocate input buffer: {error}",
+                plugin.plugin_id()
+            )
+        })?;
+    memory
+        .write(&mut store, request_ptr as usize, &request_json)
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' failed to write input buffer: {error}",
+                plugin.plugin_id()
+            )
+        })?;
+    let packed_output = run_json
+        .call(&mut store, (request_ptr, request_json.len() as u32))
+        .map_err(|error| {
+            if error.to_string().contains("epoch deadline") {
+                format!(
+                    "code_runner node '{node_id}' exceeded timeout of {}ms",
+                    node_config.timeout_ms
+                )
+            } else {
+                format!("code_runner node '{node_id}' execution failed: {error}")
+            }
+        })?;
+    let _ = dealloc.call(&mut store, (request_ptr, request_json.len() as u32));
+
+    let (output_ptr, output_len) = unpack_ptr_len(packed_output);
+    let response_json = read_core_memory_bytes(&memory, &mut store, output_ptr, output_len)
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' failed to read output buffer: {error}",
+                plugin.plugin_id()
+            )
+        })?;
+    let _ = dealloc.call(&mut store, (output_ptr, output_len));
+    let envelope =
+        serde_json::from_slice::<CoreCodeRunnerResponse>(&response_json).map_err(|error| {
+            format!("code_runner node '{node_id}' returned invalid runtime envelope: {error}")
+        })?;
+
+    if !envelope.ok {
+        return Err(format!(
+            "code_runner node '{node_id}' execution failed: {}",
+            envelope
+                .error
+                .unwrap_or_else(|| "unknown guest error".to_string())
+        ));
     }
+
+    parse_code_runner_output(node_id, envelope.json.as_deref().unwrap_or("{}"))
 }
 
 pub async fn proxy_request(
@@ -780,9 +893,10 @@ fn execute_rule_graph<'a>(
                 }
             }
             RuleGraphNodeType::Match => {
-                let node_config = node.match_node.as_ref().ok_or_else(|| {
-                    format!("rule_graph node '{}' missing match config", node.id)
-                })?;
+                let node_config = node
+                    .match_node
+                    .as_ref()
+                    .ok_or_else(|| format!("rule_graph node '{}' missing match config", node.id))?;
                 let mut matched_target = None;
                 for branch in &node_config.branches {
                     let mut branch_plugin_config = node_config.plugin.clone();
@@ -815,6 +929,7 @@ fn execute_rule_graph<'a>(
             }
             RuleGraphNodeType::CodeRunner => {
                 let port = execute_code_runner_node(
+                    plugin_registry,
                     node.id.as_str(),
                     node.code_runner.as_ref().ok_or_else(|| {
                         format!("rule_graph node '{}' missing code_runner config", node.id)
@@ -925,6 +1040,14 @@ fn execute_rule_graph<'a>(
             RuleGraphNodeType::End => break,
         };
 
+        sync_selected_targets_from_context(
+            config,
+            &workflow_context,
+            &mut outgoing_headers,
+            &mut selected_provider,
+            &mut selected_model,
+        )?;
+
         current_id = match next {
             Some(next_id) => next_id,
             None => break,
@@ -1009,6 +1132,78 @@ fn next_condition_edge<'a>(
         .iter()
         .find(|edge| edge.source == node_id && edge.source_handle.as_deref() == Some(branch))
         .map(|edge| edge.target.as_str()))
+}
+
+fn sync_selected_targets_from_context<'a>(
+    config: &'a GatewayConfig,
+    workflow_context: &HashMap<String, String>,
+    outgoing_headers: &mut HashMap<String, Vec<String>>,
+    selected_provider: &mut Option<&'a ProviderConfig>,
+    selected_model: &mut Option<&'a ModelConfig>,
+) -> Result<(), String> {
+    let requested_provider_id = workflow_context
+        .get(SELECTED_PROVIDER_CONTEXT_KEY)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    let requested_model_id = workflow_context
+        .get(SELECTED_MODEL_CONTEXT_KEY)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+
+    let resolved_model = if let Some(model_id) = requested_model_id {
+        Some(
+            config
+                .models
+                .iter()
+                .find(|model| model.id == model_id)
+                .ok_or_else(|| format!("rule_graph model '{}' not found", model_id))?,
+        )
+    } else {
+        *selected_model
+    };
+
+    let provider_id =
+        requested_provider_id.or_else(|| resolved_model.map(|model| model.provider_id.as_str()));
+    let resolved_provider = if let Some(provider_id) = provider_id {
+        Some(
+            config
+                .providers
+                .iter()
+                .find(|provider| provider.id == provider_id)
+                .ok_or_else(|| format!("rule_graph provider '{}' not found", provider_id))?,
+        )
+    } else {
+        *selected_provider
+    };
+
+    if let (Some(provider), Some(model)) = (resolved_provider, resolved_model) {
+        if model.provider_id != provider.id {
+            return Err(format!(
+                "rule_graph model '{}' does not belong to provider '{}'",
+                model.id, provider.id
+            ));
+        }
+    }
+
+    if resolved_provider.map(|provider| provider.id.as_str())
+        != selected_provider.map(|provider| provider.id.as_str())
+    {
+        if let Some(provider) = resolved_provider {
+            for header in &provider.default_headers {
+                let value = resolve_provider_header_for_graph(header, config)?;
+                outgoing_headers.insert(header.name.to_ascii_lowercase(), vec![value]);
+            }
+        }
+    }
+
+    *selected_provider = resolved_provider;
+    *selected_model = match (resolved_provider, resolved_model) {
+        (Some(provider), Some(model)) if model.provider_id == provider.id => Some(model),
+        (Some(_), Some(_)) => None,
+        (_, model) => model,
+    };
+
+    Ok(())
 }
 
 fn build_runtime_execute_input(
@@ -1194,6 +1389,24 @@ fn parse_code_runner_output(node_id: &str, json: &str) -> Result<RuntimeExecuteO
     })
 }
 
+fn unpack_ptr_len(packed: u64) -> (u32, u32) {
+    ((packed & 0xffff_ffff) as u32, (packed >> 32) as u32)
+}
+
+fn read_core_memory_bytes(
+    memory: &Memory,
+    store: &mut Store<CorePluginStoreData>,
+    ptr: u32,
+    len: u32,
+) -> Result<Vec<u8>, wasmtime::MemoryAccessError> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let mut bytes = vec![0; len as usize];
+    memory.read(store, ptr as usize, &mut bytes)?;
+    Ok(bytes)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_wasm_runtime_node(
     node_id: &str,
@@ -1250,6 +1463,7 @@ fn execute_wasm_runtime_node(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_code_runner_node(
+    plugin_registry: &PluginRegistry,
     node_id: &str,
     node_config: &CodeRunnerNodeConfig,
     method: &str,
@@ -1260,6 +1474,18 @@ fn execute_code_runner_node(
     workflow_context: &mut HashMap<String, String>,
     outgoing_headers: &mut HashMap<String, Vec<String>>,
 ) -> Result<Option<String>, String> {
+    let plugin = plugin_registry.get(CODE_RUNNER_PLUGIN_ID).ok_or_else(|| {
+        format!(
+            "code_runner plugin '{}' is not registered",
+            CODE_RUNNER_PLUGIN_ID
+        )
+    })?;
+    if plugin.runtime_kind() != crate::wasm_plugins::PluginRuntimeKind::Core {
+        return Err(format!(
+            "code_runner plugin '{}' must use runtime = \"core\"",
+            CODE_RUNNER_PLUGIN_ID
+        ));
+    }
     let runtime_input = RuntimeExecuteInput {
         request_method: method.to_string(),
         current_path: resolved_path.to_string(),
@@ -1289,7 +1515,7 @@ fn execute_code_runner_node(
         },
     };
 
-    let output = QUICKJS_CODE_RUNNER_RUNTIME.execute(node_id, node_config, &runtime_input)?;
+    let output = execute_core_code_runner_plugin(plugin, node_id, node_config, &runtime_input)?;
     apply_code_runner_output(
         node_id,
         &output,
@@ -2154,9 +2380,28 @@ capabilities = [{capability_values}]
         fs::write(plugin_dir.join("plugin.wasm"), TEST_COMPONENT_BYTES).expect("wasm should write");
     }
 
+    fn copy_repo_plugin(root: &Path, id: &str) {
+        let source_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("plugins")
+            .join(id);
+        let target_dir = root.join(id);
+        fs::create_dir_all(&target_dir).expect("plugin dir should be creatable");
+        fs::copy(
+            source_dir.join("plugin.toml"),
+            target_dir.join("plugin.toml"),
+        )
+        .expect("plugin manifest should copy");
+        fs::copy(
+            source_dir.join("plugin.wasm"),
+            target_dir.join("plugin.wasm"),
+        )
+        .expect("plugin wasm should copy");
+    }
+
     fn load_test_registry(ports: &[&str], capabilities: &[&str]) -> PluginRegistry {
         let root = temp_dir("plugins");
         write_plugin(&root, "intent-classifier", ports, capabilities);
+        copy_repo_plugin(&root, super::CODE_RUNNER_PLUGIN_ID);
         load_plugin_registry(&root).expect("plugin registry should load")
     }
 

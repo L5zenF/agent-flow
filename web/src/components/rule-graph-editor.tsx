@@ -4,6 +4,7 @@ import {
   CircleHelp,
   CopyPlus,
   Database,
+  Expand,
   FileCode2,
   Filter,
   GitBranch,
@@ -14,10 +15,13 @@ import {
   Minus,
   Plus,
   Puzzle,
+  RefreshCw,
   Route,
+  Save,
   DatabaseZap,
   ShieldPlus,
   Split,
+  Settings2,
   Trash2,
   WandSparkles,
   Shield,
@@ -63,9 +67,13 @@ import {
 } from "@/lib/types";
 
 type Props = {
+  busy?: boolean;
   config: GatewayConfig;
   setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
   pluginManifests: WasmPluginManifestSummary[];
+  onOpenSettings?: () => void;
+  onReload?: () => void;
+  onSave?: () => void;
 };
 
 type ValidationResult = {
@@ -165,7 +173,15 @@ const RESERVED_MATCH_PLUGIN_IDS = new Set([
   "log-step",
 ]);
 
-export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
+export function RuleGraphEditor({
+  busy = false,
+  config,
+  setConfig,
+  pluginManifests,
+  onOpenSettings,
+  onReload,
+  onSave,
+}: Props) {
   const graph = config.rule_graph ?? emptyConfig().rule_graph!;
   const graphRef = useRef(graph);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph.start_node_id);
@@ -173,6 +189,8 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   const [wasmConfigNodeId, setWasmConfigNodeId] = useState<string | null>(null);
   const [codeRunnerConfigNodeId, setCodeRunnerConfigNodeId] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const [viewportZoom, setViewportZoom] = useState(1);
+  const [panMode, setPanMode] = useState(false);
   const validation = useMemo(() => validateGraph(graph, config, pluginManifests), [graph, config, pluginManifests]);
   const providerOptions = useMemo(
     () => config.providers.map((provider) => ({ value: provider.id, label: provider.id })),
@@ -537,12 +555,15 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
   return (
     <>
       <div className="min-w-0">
-        <div className="rule-graph-canvas h-[calc(100dvh-6.5rem)] min-h-[680px] rounded-[24px] border border-zinc-200 bg-zinc-50 shadow-sm">
+        <div className="rule-graph-canvas h-[calc(100dvh-3.5rem)] min-h-[720px] border-y border-zinc-200 bg-zinc-50 md:rounded-none md:border-x-0">
           <ReactFlow
             nodes={canvasNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            panOnDrag={panMode}
+            selectionOnDrag={!panMode}
+            nodesDraggable={!panMode}
             onInit={setFlowInstance}
             fitView
             minZoom={0.3}
@@ -569,6 +590,9 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
               setSelectedNodeId(null);
               setSelectedEdgeId(null);
             }}
+            onMove={(_, viewport) => {
+              setViewportZoom(viewport.zoom);
+            }}
             onNodesChange={onNodesChange}
             onNodeDragStop={(_, node) => {
               canvasNodesRef.current = canvasNodesRef.current.map((item) =>
@@ -594,6 +618,8 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
           <MiniMap
             pannable
             zoomable
+            className="!bottom-[88px] !right-4 !hidden !overflow-hidden !rounded-2xl !border !border-zinc-200 !bg-white/95 !shadow-sm xl:!block"
+            style={{ width: 164, height: 112 }}
             nodeColor={(node) => {
               const data = node.data as RuleCanvasNodeData;
               if (data.unreachable) return "#f43f5e";
@@ -602,7 +628,6 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
             }}
             maskColor="rgba(255,255,255,0.72)"
           />
-          <Controls showInteractive={false} />
           <Background
             id="rule-grid-fine"
             gap={24}
@@ -616,11 +641,8 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
             variant={BackgroundVariant.Lines}
           />
 
-          <Panel position="top-left" className="!m-4">
-            <div className="w-[76px] rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm">
-              <div className="mb-2 px-1 text-center text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500">
-                Library
-              </div>
+          <Panel position="top-left" className="!ml-4 !mr-0 !mb-0 !mt-20">
+            <div className="w-[68px] rounded-[20px] border border-zinc-200 bg-white/95 p-2 shadow-sm backdrop-blur">
               <div className="grid grid-cols-1 gap-2">
                 {nodeLibrary.map((item) => (
                   <button
@@ -637,7 +659,7 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
                       event.dataTransfer.effectAllowed = "move";
                     }}
                     className={[
-                      "group relative flex h-12 w-full items-center justify-center rounded-xl border bg-white transition",
+                      "group relative flex h-11 w-full items-center justify-center rounded-xl border bg-white transition",
                       toneForLibraryItem(item).libraryButton,
                     ].join(" ")}
                   >
@@ -656,22 +678,75 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
             </div>
           </Panel>
 
-          <Panel position="top-right" className="!m-4">
-            <div title={validationBadgeTitle}>
-              <span
+          {validationIssueCount > 0 ? (
+            <Panel position="top-right" className="!m-4">
+              <div className="flex items-center gap-2">
+                <div title={validationBadgeTitle}>
+                  <span
+                    className={[
+                      "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium shadow-sm",
+                      validationBadgeTone,
+                    ].join(" ")}
+                  >
+                    {validationBadgeText}
+                  </span>
+                </div>
+                <CanvasToolbar
+                  busy={busy}
+                  onOpenSettings={onOpenSettings}
+                  onReload={onReload}
+                  onSave={onSave}
+                />
+              </div>
+            </Panel>
+          ) : (
+            <Panel position="top-right" className="!m-4">
+              <CanvasToolbar
+                busy={busy}
+                onOpenSettings={onOpenSettings}
+                onReload={onReload}
+                onSave={onSave}
+              />
+            </Panel>
+          )}
+          <Panel position="bottom-right" className="!m-4">
+            <div className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white/95 px-2 py-2 shadow-sm backdrop-blur">
+              <button
+                type="button"
+                onClick={() => setPanMode((current) => !current)}
                 className={[
-                  "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium shadow-sm",
-                  validationBadgeTone,
+                  "inline-flex h-8 w-8 items-center justify-center rounded-xl border transition",
+                  panMode
+                    ? "border-zinc-300 bg-zinc-100 text-zinc-900"
+                    : "border-transparent bg-white text-zinc-500 hover:border-zinc-200 hover:text-zinc-900",
                 ].join(" ")}
+                aria-label={panMode ? "Switch to select mode" : "Switch to pan mode"}
+                title={panMode ? "Pan mode" : "Select mode"}
               >
-                {validationBadgeText}
-              </span>
-            </div>
-          </Panel>
-
-          <Panel position="bottom-left" className="!m-4">
-            <div className="rounded-lg bg-white/90 px-2.5 py-1.5 text-[11px] text-zinc-500 shadow-sm">
-              Drag or click to add
+                <Hand className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void flowInstance?.zoomTo(1, { duration: 220 });
+                }}
+                className="inline-flex min-w-[58px] items-center justify-center rounded-xl border border-transparent px-2 text-center text-sm font-medium tabular-nums text-zinc-700 transition hover:border-zinc-200 hover:bg-zinc-50"
+                aria-label="Reset zoom to 100%"
+                title="Reset zoom to 100%"
+              >
+                {Math.round(viewportZoom * 100)}%
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void flowInstance?.fitView({ padding: 0.18, duration: 240 });
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-transparent bg-white text-zinc-500 transition hover:border-zinc-200 hover:text-zinc-900"
+                aria-label="Fit view"
+                title="Fit view"
+              >
+                <Expand className="h-4 w-4" />
+              </button>
             </div>
           </Panel>
           </ReactFlow>
@@ -700,6 +775,67 @@ export function RuleGraphEditor({ config, setConfig, pluginManifests }: Props) {
         }}
       />
     </>
+  );
+}
+
+function CanvasToolbar({
+  busy,
+  onOpenSettings,
+  onReload,
+  onSave,
+}: {
+  busy: boolean;
+  onOpenSettings?: () => void;
+  onReload?: () => void;
+  onSave?: () => void;
+}) {
+  const actions = [
+    onReload
+      ? {
+          key: "reload",
+          label: "Reload",
+          icon: <RefreshCw className="h-4 w-4" />,
+          onClick: onReload,
+        }
+      : null,
+    onSave
+      ? {
+          key: "save",
+          label: "Save",
+          icon: <Save className="h-4 w-4" />,
+          onClick: onSave,
+        }
+      : null,
+    onOpenSettings
+      ? {
+          key: "settings",
+          label: "Settings",
+          icon: <Settings2 className="h-4 w-4" />,
+          onClick: onOpenSettings,
+        }
+      : null,
+  ].filter((action): action is NonNullable<typeof action> => Boolean(action));
+
+  if (actions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center gap-1 rounded-2xl border border-zinc-200 bg-white/95 p-1 shadow-sm backdrop-blur">
+      {actions.map((action) => (
+        <button
+          key={action.key}
+          type="button"
+          onClick={action.onClick}
+          disabled={busy}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={action.label}
+          title={action.label}
+        >
+          {action.icon}
+        </button>
+      ))}
+    </div>
   );
 }
 

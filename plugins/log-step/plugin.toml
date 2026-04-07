@@ -1,0 +1,16 @@
+id = "log-step"
+name = "Log"
+version = "0.1.0"
+description = "Emits a workflow log message from a wasm step."
+supported_output_ports = ["default"]
+capabilities = ["log"]
+
+[ui]
+icon = "file_text"
+category = "utility"
+tone = "sky"
+order = 50
+tags = ["log", "audit"]
+
+[default_config_schema_hints]
+log_message = "Message template to emit."

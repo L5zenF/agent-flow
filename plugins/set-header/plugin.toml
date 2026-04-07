@@ -1,0 +1,17 @@
+id = "set-header"
+name = "Set Header"
+version = "0.1.0"
+description = "Sets or appends request headers inside a wasm step."
+supported_output_ports = ["default"]
+capabilities = ["log"]
+
+[ui]
+icon = "wand"
+category = "transform"
+tone = "emerald"
+order = 40
+tags = ["header", "transform"]
+
+[default_config_schema_hints]
+set_headers = "Array of header mutations."
+log_message = "Optional log line."

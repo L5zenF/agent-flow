@@ -1,0 +1,16 @@
+id = "condition-evaluator"
+name = "Condition"
+version = "0.1.0"
+description = "Evaluates a condition expression and returns true or false."
+supported_output_ports = ["true", "false", "default"]
+capabilities = ["log"]
+
+[ui]
+icon = "split"
+category = "control"
+tone = "violet"
+order = 10
+tags = ["condition", "branch"]
+
+[default_config_schema_hints]
+expr = "Condition expression, for example: method == \"POST\" && path.contains(\"/chat\")"

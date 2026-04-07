@@ -1118,7 +1118,9 @@ fn validate_rule_graph_node(
         RuleGraphNodeType::WasmPlugin => {
             validate_wasm_plugin_node(node.id.as_str(), node.wasm_plugin.as_ref())?
         }
-        RuleGraphNodeType::Match => validate_match_node(node.id.as_str(), graph, node.match_node.as_ref())?,
+        RuleGraphNodeType::Match => {
+            validate_match_node(node.id.as_str(), graph, node.match_node.as_ref())?
+        }
         RuleGraphNodeType::CodeRunner => {
             validate_code_runner_node(node.id.as_str(), node.code_runner.as_ref())?
         }
@@ -1370,7 +1372,9 @@ fn validate_match_node(
     };
     validate_wasm_plugin_node(node_id, Some(&config.plugin))?;
     if config.branches.is_empty() {
-        return Err(format!("rule_graph node '{node_id}' must define at least one match branch").into());
+        return Err(
+            format!("rule_graph node '{node_id}' must define at least one match branch").into(),
+        );
     }
 
     let node_ids = graph
@@ -1381,7 +1385,10 @@ fn validate_match_node(
     let mut branch_ids = HashSet::new();
     for branch in &config.branches {
         if branch.id.trim().is_empty() {
-            return Err(format!("rule_graph node '{node_id}' contains a match branch with empty id").into());
+            return Err(format!(
+                "rule_graph node '{node_id}' contains a match branch with empty id"
+            )
+            .into());
         }
         if !branch_ids.insert(branch.id.as_str()) {
             return Err(format!(

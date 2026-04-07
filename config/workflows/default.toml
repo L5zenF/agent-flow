@@ -33,71 +33,89 @@ target_node_id = "select-chat-model"
 [[workflow.nodes.match.branches]]
 id = "legacy-chat"
 expr = 'method == "POST" && path == "/chat"'
-target_node_id = "rewrite-legacy-chat"
+target_node_id = "legacy-transform"
 
 [[workflow.nodes]]
-id = "rewrite-legacy-chat"
-type = "rewrite_path"
+id = "legacy-transform"
+type = "wasm_plugin"
 
 [workflow.nodes.position]
 x = 560.0
 y = 320.0
 
-[workflow.nodes.rewrite_path]
-value = "/v1/chat/completions"
+[workflow.nodes.wasm_plugin]
+plugin_id = "workflow-transform"
+timeout_ms = 250
+max_memory_bytes = 16777216
+granted_capabilities = ["log"]
+
+[workflow.nodes.wasm_plugin.config]
+path_rewrite = "/v1/chat/completions"
+log_message = "normalized legacy chat path from ${path}"
 
 [[workflow.nodes]]
 id = "select-chat-model"
-type = "select_model"
+type = "wasm_plugin"
 
 [workflow.nodes.position]
 x = 560.0
 y = 120.0
 
-[workflow.nodes.select_model]
+[workflow.nodes.wasm_plugin]
+plugin_id = "select-model"
+timeout_ms = 250
+max_memory_bytes = 16777216
+granted_capabilities = ["log"]
+
+[workflow.nodes.wasm_plugin.config]
 provider_id = "kimi"
 model_id = "kimi-k2"
 
 [[workflow.nodes]]
 id = "fallback-provider"
-type = "route_provider"
+type = "wasm_plugin"
 
 [workflow.nodes.position]
 x = 560.0
 y = 520.0
 
-[workflow.nodes.route_provider]
+[workflow.nodes.wasm_plugin]
+plugin_id = "route-provider"
+timeout_ms = 250
+max_memory_bytes = 16777216
+granted_capabilities = ["log"]
+
+[workflow.nodes.wasm_plugin.config]
 provider_id = "kimi"
 
 [[workflow.nodes]]
-id = "tag-route"
-type = "set_header"
+id = "finalize-response"
+type = "wasm_plugin"
 
 [workflow.nodes.position]
 x = 860.0
 y = 180.0
 
-[workflow.nodes.set_header]
+[workflow.nodes.wasm_plugin]
+plugin_id = "workflow-transform"
+timeout_ms = 250
+max_memory_bytes = 16777216
+granted_capabilities = ["log"]
+
+[[workflow.nodes.wasm_plugin.config.set_headers]]
+op = "set"
 name = "x-route-engine"
 value = "match"
 
-[[workflow.nodes]]
-id = "log-summary"
-type = "log"
-
-[workflow.nodes.position]
-x = 1120.0
-y = 180.0
-
-[workflow.nodes.log]
-message = "matched=${ctx.match.last_branch} result=${ctx.match.last_result} path=${ctx.path}"
+[workflow.nodes.wasm_plugin.config]
+log_message = "matched=${ctx.match.last_branch} result=${ctx.match.last_result} path=${path}"
 
 [[workflow.nodes]]
 id = "end"
 type = "end"
 
 [workflow.nodes.position]
-x = 1360.0
+x = 1160.0
 y = 180.0
 
 [[workflow.edges]]
@@ -114,7 +132,7 @@ source_handle = "match:chat-api"
 [[workflow.edges]]
 id = "match-1-legacy-chat"
 source = "match-1"
-target = "rewrite-legacy-chat"
+target = "legacy-transform"
 source_handle = "match:legacy-chat"
 
 [[workflow.edges]]
@@ -124,26 +142,21 @@ target = "fallback-provider"
 source_handle = "match:fallback"
 
 [[workflow.edges]]
-id = "rewrite-legacy-chat-next"
-source = "rewrite-legacy-chat"
+id = "legacy-transform-next"
+source = "legacy-transform"
 target = "select-chat-model"
 
 [[workflow.edges]]
 id = "select-chat-model-next"
 source = "select-chat-model"
-target = "tag-route"
+target = "finalize-response"
 
 [[workflow.edges]]
 id = "fallback-provider-next"
 source = "fallback-provider"
-target = "tag-route"
+target = "finalize-response"
 
 [[workflow.edges]]
-id = "tag-route-next"
-source = "tag-route"
-target = "log-summary"
-
-[[workflow.edges]]
-id = "log-summary-next"
-source = "log-summary"
+id = "finalize-response-next"
+source = "finalize-response"
 target = "end"

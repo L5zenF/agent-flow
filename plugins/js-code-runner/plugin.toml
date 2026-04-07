@@ -1,0 +1,14 @@
+id = "js-code-runner"
+name = "Code Runner"
+version = "0.1.0"
+description = "Executes user JavaScript inside a core wasm guest."
+runtime = "core"
+supported_output_ports = ["default"]
+capabilities = ["log"]
+
+[ui]
+icon = "code"
+category = "utility"
+tone = "emerald"
+order = 60
+tags = ["javascript", "transform"]

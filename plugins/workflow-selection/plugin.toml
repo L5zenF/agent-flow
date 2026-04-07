@@ -1,0 +1,18 @@
+id = "workflow-selection"
+name = "Workflow Selection"
+version = "0.1.0"
+description = "Writes provider and model routing decisions into workflow context."
+supported_output_ports = ["default"]
+capabilities = ["log"]
+
+[ui]
+icon = "database"
+category = "routing"
+tone = "sky"
+order = 50
+tags = ["routing", "provider", "model"]
+
+[default_config_schema_hints]
+provider_id = "Provider id to select for downstream proxying."
+model_id = "Optional model id to select. Must belong to the selected provider."
+log_message = "Optional template log line."

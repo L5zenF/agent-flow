@@ -1,0 +1,20 @@
+id = "workflow-transform"
+name = "Workflow Transform"
+version = "0.1.0"
+description = "Applies path, header, context, and log transforms inside a workflow step."
+supported_output_ports = ["default"]
+capabilities = ["log"]
+
+[ui]
+icon = "wand"
+category = "transform"
+tone = "emerald"
+order = 20
+tags = ["transform", "headers", "context"]
+
+[default_config_schema_hints]
+path_rewrite = "Optional rewritten request path."
+next_port = "Optional output port. Leave empty to use default."
+log_message = "Optional template log line."
+set_headers = "Array of header mutations: op=set|append|remove|copy|set_if_absent."
+set_context = "Array of context values to set."

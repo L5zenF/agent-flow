@@ -162,13 +162,11 @@ export default function App() {
   async function activateWorkflow(id: string) {
     setBusy(true);
     try {
-      const summary = await api.activateWorkflow(id);
-      setWorkflowSummaries((current) =>
-        current.map((workflow) => ({
-          ...workflow,
-          is_active: workflow.id === summary.id,
-        })),
-      );
+      const [summary, workflows] = await Promise.all([
+        api.activateWorkflow(id),
+        api.getWorkflows(),
+      ]);
+      setWorkflowSummaries(workflows);
       setConfig((current) => ({
         ...current,
         active_workflow_id: summary.id,
@@ -266,15 +264,15 @@ export default function App() {
         <header
           className={[
             "border-b border-zinc-200/80 bg-white/75 backdrop-blur-md",
-            openedWorkflow ? "px-3 py-2" : "px-4 py-3",
+            openedWorkflow ? "px-3 py-1.5" : "px-4 py-3",
           ].join(" ")}
         >
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
             <div className="min-w-0">
               {openedWorkflow ? (
                 <div className="flex min-w-0 items-center gap-2">
-                  <Badge>editing</Badge>
-                  <div className="truncate text-sm font-medium text-zinc-900">
+                  <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <div className="truncate text-sm font-medium text-zinc-800">
                     {openedWorkflowSummary?.name ?? openedWorkflowId ?? "Workflow"}
                   </div>
                 </div>
@@ -293,15 +291,19 @@ export default function App() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <TopBarButton label="Settings" onClick={openSettings}>
-                <Settings2 className="h-4 w-4" />
-              </TopBarButton>
-              <TopBarButton label="Reload admin state" onClick={() => void load()} disabled={busy}>
-                <RefreshCw className="h-4 w-4" />
-              </TopBarButton>
-              <TopBarButton label="Save" onClick={() => void save()} disabled={busy}>
-                <Save className="h-4 w-4" />
-              </TopBarButton>
+              {!openedWorkflow ? (
+                <>
+                  <TopBarButton label="Settings" onClick={openSettings}>
+                    <Settings2 className="h-4 w-4" />
+                  </TopBarButton>
+                  <TopBarButton label="Reload admin state" onClick={() => void load()} disabled={busy}>
+                    <RefreshCw className="h-4 w-4" />
+                  </TopBarButton>
+                  <TopBarButton label="Save" onClick={() => void save()} disabled={busy}>
+                    <Save className="h-4 w-4" />
+                  </TopBarButton>
+                </>
+              ) : null}
             </div>
           </div>
           {!openedWorkflow ? (
@@ -314,15 +316,19 @@ export default function App() {
           ) : null}
         </header>
 
-        <main className={openedWorkflow ? "flex-1 px-2 pb-2 pt-2 lg:px-3" : "flex-1 px-3 pb-3 pt-2 lg:px-4"}>
+        <main className={openedWorkflow ? "flex-1 px-0 pb-0 pt-0" : "flex-1 px-3 pb-3 pt-2 lg:px-4"}>
           {openedWorkflow && openedWorkflowSummary ? (
             <WorkflowEditorShell
               summary={openedWorkflowSummary}
+              busy={busy}
               config={editorConfig}
               setConfig={applyEditorConfig}
               pluginManifests={pluginManifests}
               onBack={closeWorkflow}
               onSetActive={() => void activateWorkflow(openedWorkflowSummary.id)}
+              onOpenSettings={openSettings}
+              onReload={() => void load(openedWorkflowSummary.id)}
+              onSave={() => void save()}
             />
           ) : (
             <WorkflowGallery
@@ -369,37 +375,34 @@ function WorkflowGallery({
 }) {
   const orderedWorkflows = useMemo(
     () =>
-      [...workflows].sort((left, right) => {
-        if (left.is_active !== right.is_active) {
-          return left.is_active ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name);
-      }),
+      [...workflows].sort((left, right) => left.name.localeCompare(right.name)),
     [workflows],
   );
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-4">
-      <section className="rounded-[28px] border border-zinc-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(244,244,245,0.92)_45%,rgba(228,232,240,0.92))] p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-2xl">
-            <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-500">
-              Workflow Gallery
-            </div>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-950">
-              Choose the workflow canvas you want to work on.
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              Global settings stay available from the top bar. Opening a workflow switches into the
-              existing rule graph editor for that document only.
-            </p>
+      <section className="flex items-end justify-between gap-4">
+        <div className="max-w-2xl">
+          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
+            Workflow Gallery
           </div>
-          <Button className="gap-2 self-start lg:self-auto" onClick={onCreate} disabled={busy}>
-            <Plus className="h-4 w-4" />
-            New Workflow
-          </Button>
+          <h2 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-950">
+            Browse workflows
+          </h2>
         </div>
+        <Button className="gap-2 self-start lg:self-auto" onClick={onCreate} disabled={busy}>
+          <Plus className="h-4 w-4" />
+          New Workflow
+        </Button>
       </section>
+
+      {orderedWorkflows.length > 0 ? (
+        <div className="flex items-center gap-2 text-sm text-zinc-500">
+          <span>{orderedWorkflows.length} workflows</span>
+          <span className="text-zinc-300">/</span>
+          <span>{orderedWorkflows.filter((workflow) => workflow.is_active).length} active</span>
+        </div>
+      ) : null}
 
       {orderedWorkflows.length === 0 ? (
         <Card className="rounded-[24px] border-dashed border-zinc-300 bg-white/90 p-10 text-center shadow-none">
@@ -422,7 +425,12 @@ function WorkflowGallery({
           {orderedWorkflows.map((workflow) => (
             <Card
               key={workflow.id}
-              className="rounded-[24px] border border-zinc-200/80 bg-white/90 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.06)]"
+              className={[
+                "rounded-[24px] p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                workflow.is_active
+                  ? "border-emerald-200 bg-emerald-50/60"
+                  : "border-zinc-200 bg-white",
+              ].join(" ")}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -430,44 +438,46 @@ function WorkflowGallery({
                     <div className="truncate text-lg font-semibold text-zinc-950">{workflow.name}</div>
                     {workflow.is_active ? <Badge>Active</Badge> : <Badge variant="secondary">Draft</Badge>}
                   </div>
-                  <div className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-                    {workflow.id}
+                  <div className="mt-1 text-sm text-zinc-500">
+                    {workflow.description?.trim() || "No description yet."}
                   </div>
                 </div>
-                <div className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-600">
+                <div className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
                   {workflow.node_count} nodes
                 </div>
               </div>
 
-              <p className="mt-4 min-h-12 text-sm leading-6 text-zinc-600">
-                {workflow.description?.trim() || "No description yet."}
-              </p>
-
-              <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 text-sm text-zinc-600">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Edges</span>
-                  <span className="font-medium text-zinc-900">{workflow.edge_count}</span>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-zinc-50 px-3 py-2">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Nodes</div>
+                  <div className="mt-1 text-base font-semibold text-zinc-900">{workflow.node_count}</div>
                 </div>
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <span>File</span>
-                  <span className="truncate font-mono text-xs text-zinc-500">{workflow.file}</span>
+                <div className="rounded-xl bg-zinc-50 px-3 py-2">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Edges</div>
+                  <div className="mt-1 text-base font-semibold text-zinc-900">{workflow.edge_count}</div>
                 </div>
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Button className="gap-2" onClick={() => onOpen(workflow.id)} disabled={busy}>
-                  <FolderOpen className="h-4 w-4" />
-                  Open Workflow
-                </Button>
-                <Button
-                  variant="outline"
-                  className="gap-2"
-                  onClick={() => onActivate(workflow.id)}
-                  disabled={busy || workflow.is_active}
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  Set Active
-                </Button>
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-zinc-100 pt-4">
+                <div className="min-w-0 font-mono text-[11px] text-zinc-400">{workflow.id}</div>
+                <div className="flex items-center gap-2">
+                  {!workflow.is_active ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => onActivate(workflow.id)}
+                      disabled={busy}
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Set Active
+                    </Button>
+                  ) : null}
+                  <Button size="sm" className="gap-2" onClick={() => onOpen(workflow.id)} disabled={busy}>
+                    <FolderOpen className="h-4 w-4" />
+                    Open
+                  </Button>
+                </div>
               </div>
             </Card>
           ))}
@@ -479,38 +489,65 @@ function WorkflowGallery({
 
 function WorkflowEditorShell({
   summary,
+  busy,
   config,
   setConfig,
   pluginManifests,
   onBack,
   onSetActive,
+  onOpenSettings,
+  onReload,
+  onSave,
 }: {
   summary: WorkflowSummary;
+  busy: boolean;
   config: GatewayConfig;
   setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
   pluginManifests: WasmPluginManifestSummary[];
   onBack: () => void;
   onSetActive: () => void;
+  onOpenSettings: () => void;
+  onReload: () => void;
+  onSave: () => void;
 }) {
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" className="gap-2" onClick={onBack}>
+    <div className="relative flex h-full flex-col">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 px-4 py-4">
+        <div className="pointer-events-auto flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 rounded-full border-zinc-200 bg-white/95 px-3 shadow-sm backdrop-blur"
+            onClick={onBack}
+          >
             <ArrowLeft className="h-4 w-4" />
-            Back
           </Button>
-          {summary.is_active ? <Badge>Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
-          <span className="hidden font-mono text-xs text-zinc-500 md:inline">{summary.id}</span>
+          <div className="hidden items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3 py-2 text-xs text-zinc-500 shadow-sm backdrop-blur md:flex">
+            {summary.is_active ? <Badge>Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
+            <span className="font-mono">{summary.id}</span>
+          </div>
         </div>
         {!summary.is_active ? (
-          <Button variant="outline" size="sm" className="gap-2" onClick={onSetActive}>
-            <CheckCircle2 className="h-4 w-4" />
+          <Button
+            variant="outline"
+            size="sm"
+            className="pointer-events-auto h-9 rounded-full border-zinc-200 bg-white/95 px-3 shadow-sm backdrop-blur"
+            onClick={onSetActive}
+          >
+            <CheckCircle2 className="mr-2 h-4 w-4" />
             Set Active
           </Button>
         ) : null}
       </div>
-      <RuleGraphEditor config={config} setConfig={setConfig} pluginManifests={pluginManifests} />
+      <RuleGraphEditor
+        busy={busy}
+        config={config}
+        setConfig={setConfig}
+        pluginManifests={pluginManifests}
+        onOpenSettings={onOpenSettings}
+        onReload={onReload}
+        onSave={onSave}
+      />
     </div>
   );
 }

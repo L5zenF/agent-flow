@@ -2,7 +2,7 @@ listen = "127.0.0.1:9001"
 admin_listen = "127.0.0.1:9002"
 default_secret_env = "PROXY_SECRET"
 workflows_dir = "workflows"
-active_workflow_id = "default"
+active_workflow_id = "tsttest"
 
 [[providers]]
 id = "kimi"
@@ -49,3 +49,9 @@ id = "default"
 name = "Default Workflow"
 file = "default.toml"
 description = "Migrated from legacy rule_graph"
+
+[[workflows]]
+id = "tsttest"
+name = "tsttest"
+file = "tsttest.toml"
+description = "tsttest"
