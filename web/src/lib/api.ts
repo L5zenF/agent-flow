@@ -5,6 +5,7 @@ import {
   type WorkflowSummary,
   type GatewayConfig,
   type GatewayConfigWire,
+  type SettingsSchema,
   type WasmPluginManifestSummary,
 } from "./types";
 
@@ -47,6 +48,7 @@ export const api = {
       method: "POST",
     }),
   getPlugins: () => request<WasmPluginManifestSummary[]>("/admin/plugins"),
+  getSettingsSchema: () => request<SettingsSchema>("/admin/settings-schema"),
   validateConfig: (config: GatewayConfig) =>
     request<void>("/admin/validate", {
       method: "POST",

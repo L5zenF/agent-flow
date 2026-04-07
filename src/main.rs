@@ -7,8 +7,8 @@ use axum::Router;
 use axum::routing::{any, get, post};
 use clap::{Args, Parser, Subcommand};
 use proxy_tools::admin_api::{
-    AdminState, activate_workflow, create_workflow, get_config, get_plugins, get_workflow,
-    get_workflows, put_config, put_workflow, reload_config, validate_config_handler,
+    AdminState, activate_workflow, create_workflow, get_config, get_plugins, get_settings_schema,
+    get_workflow, get_workflows, put_config, put_workflow, reload_config, validate_config_handler,
 };
 use proxy_tools::config::load_runtime_state;
 use proxy_tools::crypto::encrypt_header_value;
@@ -98,6 +98,7 @@ async fn serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .route("/admin/workflows/{id}", get(get_workflow).put(put_workflow))
         .route("/admin/workflows/{id}/activate", post(activate_workflow))
         .route("/admin/plugins", get(get_plugins))
+        .route("/admin/settings-schema", get(get_settings_schema))
         .route("/admin/validate", post(validate_config_handler))
         .route("/admin/reload", post(reload_config))
         .with_state(admin_state);

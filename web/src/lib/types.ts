@@ -251,6 +251,42 @@ export type WorkflowDocument = {
   workflow: RuleGraphConfig;
 };
 
+export type SettingsSchemaFieldType =
+  | "text"
+  | "textarea"
+  | "boolean"
+  | "select"
+  | "object_list";
+
+export type SettingsSchemaOptionSource = "providers";
+
+export type SettingsSchemaField = {
+  key: string;
+  label: string;
+  type: SettingsSchemaFieldType;
+  required?: boolean;
+  placeholder?: string | null;
+  help_text?: string | null;
+  option_source?: SettingsSchemaOptionSource | null;
+  fields?: SettingsSchemaField[] | null;
+};
+
+export type SettingsSchemaSection = {
+  key: string;
+  title: string;
+  description: string;
+  list_label?: string | null;
+  add_label?: string | null;
+  empty_text?: string | null;
+  fields: SettingsSchemaField[];
+};
+
+export type SettingsSchema = {
+  global: SettingsSchemaSection;
+  providers: SettingsSchemaSection;
+  models: SettingsSchemaSection;
+};
+
 export type GatewayConfig = {
   listen: string;
   admin_listen: string;

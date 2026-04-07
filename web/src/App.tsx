@@ -16,6 +16,9 @@ import { api } from "@/lib/api";
 import {
   emptyConfig,
   type GatewayConfig,
+  type SettingsSchema,
+  type SettingsSchemaField,
+  type SettingsSchemaSection,
   type WasmPluginManifestSummary,
   type WorkflowDocument,
   type WorkflowSummary,
@@ -35,6 +38,7 @@ export default function App() {
   const [openedWorkflowId, setOpenedWorkflowId] = useState<string | null>(null);
   const [openedWorkflow, setOpenedWorkflow] = useState<WorkflowDocument | null>(null);
   const [pluginManifests, setPluginManifests] = useState<WasmPluginManifestSummary[]>([]);
+  const [settingsSchema, setSettingsSchema] = useState<SettingsSchema | null>(null);
   const [status, setStatus] = useState("Loading...");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -106,15 +110,17 @@ export default function App() {
   async function load(targetWorkflowId?: string | null) {
     setBusy(true);
     try {
-      const [nextConfig, nextWorkflows, nextPlugins] = await Promise.all([
+      const [nextConfig, nextWorkflows, nextPlugins, nextSettingsSchema] = await Promise.all([
         api.getConfig(),
         api.getWorkflows(),
         api.getPlugins(),
+        api.getSettingsSchema().catch(() => null),
       ]);
 
       setConfig(stripRuleGraph(nextConfig));
       setWorkflowSummaries(nextWorkflows);
       setPluginManifests(nextPlugins);
+      setSettingsSchema(nextSettingsSchema);
 
       const workflowId =
         targetWorkflowId === undefined ? latestOpenedWorkflowIdRef.current : targetWorkflowId;
@@ -264,7 +270,7 @@ export default function App() {
         <header
           className={[
             "border-b border-zinc-200/80 bg-white/75 backdrop-blur-md",
-            openedWorkflow ? "px-3 py-1.5" : "px-4 py-3",
+            openedWorkflow ? "px-3 py-1.5" : "hidden",
           ].join(" ")}
         >
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
@@ -277,34 +283,12 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <>
-                  <Badge>gateway switch</Badge>
-                  <div className="mt-2 min-w-0">
-                    <h1 className="truncate font-mono text-xl font-semibold tracking-tight">
-                      LLM Gateway
-                    </h1>
-                    <p className="mt-0.5 truncate text-sm text-zinc-500">
-                      Workflow gallery for opening, activating, and editing rule graph canvases.
-                    </p>
-                  </div>
-                </>
+                <div className="min-w-0">
+                  <h1 className="truncate text-lg font-semibold tracking-tight text-zinc-950">Gallery</h1>
+                </div>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              {!openedWorkflow ? (
-                <>
-                  <TopBarButton label="Settings" onClick={openSettings}>
-                    <Settings2 className="h-4 w-4" />
-                  </TopBarButton>
-                  <TopBarButton label="Reload admin state" onClick={() => void load()} disabled={busy}>
-                    <RefreshCw className="h-4 w-4" />
-                  </TopBarButton>
-                  <TopBarButton label="Save" onClick={() => void save()} disabled={busy}>
-                    <Save className="h-4 w-4" />
-                  </TopBarButton>
-                </>
-              ) : null}
-            </div>
+            <div />
           </div>
           {!openedWorkflow ? (
             <div className="mx-auto mt-2 flex max-w-7xl items-center justify-start">
@@ -316,7 +300,7 @@ export default function App() {
           ) : null}
         </header>
 
-        <main className={openedWorkflow ? "flex-1 px-0 pb-0 pt-0" : "flex-1 px-3 pb-3 pt-2 lg:px-4"}>
+        <main className={openedWorkflow ? "flex-1 px-0 pb-0 pt-0" : "flex-1 px-3 pb-3 pt-3 lg:px-4"}>
           {openedWorkflow && openedWorkflowSummary ? (
             <WorkflowEditorShell
               summary={openedWorkflowSummary}
@@ -337,14 +321,20 @@ export default function App() {
               onOpen={(id) => void openWorkflow(id)}
               onActivate={(id) => void activateWorkflow(id)}
               onCreate={() => setNewWorkflowOpen(true)}
+              onOpenSettings={openSettings}
+              onReload={() => void load()}
+              onSave={() => void save()}
             />
           )}
         </main>
 
         <SettingsModal
           config={editorConfig}
+          schema={settingsSchema}
+          busy={busy}
           open={settingsOpen}
           setConfig={applyEditorConfig}
+          onSave={() => void save()}
           onClose={closeSettings}
         />
         <NewWorkflowModal
@@ -366,12 +356,18 @@ function WorkflowGallery({
   onOpen,
   onActivate,
   onCreate,
+  onOpenSettings,
+  onReload,
+  onSave,
 }: {
   workflows: WorkflowSummary[];
   busy: boolean;
   onOpen: (id: string) => void;
   onActivate: (id: string) => void;
   onCreate: () => void;
+  onOpenSettings: () => void;
+  onReload: () => void;
+  onSave: () => void;
 }) {
   const orderedWorkflows = useMemo(
     () =>
@@ -380,29 +376,35 @@ function WorkflowGallery({
   );
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-4">
-      <section className="flex items-end justify-between gap-4">
-        <div className="max-w-2xl">
-          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
-            Workflow Gallery
+    <div className="relative mx-auto flex max-w-7xl flex-col gap-4 pb-24">
+      <section className="flex items-start justify-between gap-4 rounded-[24px] border border-zinc-200 bg-white px-5 py-4 shadow-sm">
+        <div className="min-w-0">
+          <div className="text-2xl font-semibold tracking-tight text-zinc-950">Workflow Gallery</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <div className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-zinc-600">
+              {orderedWorkflows.length} workflows
+            </div>
+            <div className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-zinc-600">
+              {orderedWorkflows.filter((workflow) => workflow.is_active).length} active
+            </div>
           </div>
-          <h2 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-950">
-            Browse workflows
-          </h2>
         </div>
-        <Button className="gap-2 self-start lg:self-auto" onClick={onCreate} disabled={busy}>
-          <Plus className="h-4 w-4" />
-          New Workflow
-        </Button>
+        <div className="flex shrink-0 items-center gap-2 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-2">
+          <Button size="sm" className="gap-2" onClick={onCreate} disabled={busy}>
+            <Plus className="h-4 w-4" />
+            New Workflow
+          </Button>
+          <TopBarButton label="Settings" onClick={onOpenSettings}>
+            <Settings2 className="h-4 w-4" />
+          </TopBarButton>
+          <TopBarButton label="Reload admin state" onClick={onReload} disabled={busy}>
+            <RefreshCw className="h-4 w-4" />
+          </TopBarButton>
+          <TopBarButton label="Save" onClick={onSave} disabled={busy}>
+            <Save className="h-4 w-4" />
+          </TopBarButton>
+        </div>
       </section>
-
-      {orderedWorkflows.length > 0 ? (
-        <div className="flex items-center gap-2 text-sm text-zinc-500">
-          <span>{orderedWorkflows.length} workflows</span>
-          <span className="text-zinc-300">/</span>
-          <span>{orderedWorkflows.filter((workflow) => workflow.is_active).length} active</span>
-        </div>
-      ) : null}
 
       {orderedWorkflows.length === 0 ? (
         <Card className="rounded-[24px] border-dashed border-zinc-300 bg-white/90 p-10 text-center shadow-none">
@@ -426,12 +428,15 @@ function WorkflowGallery({
             <Card
               key={workflow.id}
               className={[
-                "rounded-[24px] p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                "relative overflow-hidden rounded-[24px] border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
                 workflow.is_active
-                  ? "border-emerald-200 bg-emerald-50/60"
+                  ? "border-emerald-200 bg-white shadow-[inset_0_0_0_1px_rgba(16,185,129,0.06)]"
                   : "border-zinc-200 bg-white",
               ].join(" ")}
             >
+              {workflow.is_active ? (
+                <div className="absolute inset-y-0 left-0 w-1.5 bg-emerald-500/80" />
+              ) : null}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -512,8 +517,8 @@ function WorkflowEditorShell({
 }) {
   return (
     <div className="relative flex h-full flex-col">
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 px-4 py-4">
-        <div className="pointer-events-auto flex items-center gap-2">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-start px-4 py-4">
+        <div className="pointer-events-auto flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -526,18 +531,18 @@ function WorkflowEditorShell({
             {summary.is_active ? <Badge>Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
             <span className="font-mono">{summary.id}</span>
           </div>
+          {!summary.is_active ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-full border-zinc-200 bg-white/95 px-3 shadow-sm backdrop-blur"
+              onClick={onSetActive}
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Set Active
+            </Button>
+          ) : null}
         </div>
-        {!summary.is_active ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="pointer-events-auto h-9 rounded-full border-zinc-200 bg-white/95 px-3 shadow-sm backdrop-blur"
-            onClick={onSetActive}
-          >
-            <CheckCircle2 className="mr-2 h-4 w-4" />
-            Set Active
-          </Button>
-        ) : null}
       </div>
       <RuleGraphEditor
         busy={busy}
@@ -642,13 +647,19 @@ function NewWorkflowModal({
 
 function SettingsModal({
   config,
+  schema,
+  busy,
   open,
   setConfig,
+  onSave,
   onClose,
 }: {
   config: GatewayConfig;
+  schema: SettingsSchema | null;
+  busy: boolean;
   open: boolean;
   setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
+  onSave: () => void;
   onClose: () => void;
 }) {
   if (!open) {
@@ -657,32 +668,44 @@ function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 p-4">
-      <div className="max-h-[85vh] w-full max-w-4xl overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.18)]">
-        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4 sm:px-6">
-          <div>
-            <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Settings
+      <div className="max-h-[88vh] w-full max-w-6xl overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start justify-between gap-6 border-b border-zinc-200 px-5 py-5 sm:px-6">
+          <div className="min-w-0">
+            <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+              Gateway Settings
             </div>
-            <div className="mt-1 text-lg font-semibold text-zinc-900">
-              Gateway configuration
+            <div className="mt-2 text-2xl font-semibold tracking-tight text-zinc-950">
+              Configure runtime, providers, and models
             </div>
-            <p className="mt-1 text-sm text-zinc-500">
-              Global config, providers, and models share the same live config state.
+            <p className="mt-1.5 max-w-2xl text-sm leading-6 text-zinc-500">
+              Runtime values stay host-controlled. Provider cards are the main workspace for upstream
+              configuration and attached models.
             </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+              <div className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-zinc-600">
+                {config.providers.length} providers
+              </div>
+              <div className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-zinc-600">
+                {config.models.length} models
+              </div>
+              <div className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-zinc-600">
+                Live config state
+              </div>
+            </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="max-h-[calc(85vh-88px)] space-y-5 overflow-y-auto px-5 py-5 sm:px-6">
+        <div className="max-h-[calc(88vh-186px)] space-y-6 overflow-y-auto bg-zinc-50/60 px-5 py-5 sm:px-6">
           <SettingsSection
-            title="Global config"
-            description="These values feed the same config object used by the workflow gallery and canvas editor."
+            title="Runtime"
+            description="Host-level values that power the admin shell and gateway process."
           >
             <div className="grid gap-4 md:grid-cols-2">
               <Field
@@ -711,20 +734,234 @@ function SettingsModal({
           </SettingsSection>
 
           <SettingsSection
-            title="Providers"
-            description="Manage upstream providers and their default headers without leaving the admin shell."
+            title="Providers & Models"
+            description="Each provider owns its headers and the models attached to it."
           >
-            <ProvidersSection config={config} setConfig={setConfig} />
-          </SettingsSection>
-
-          <SettingsSection
-            title="Models"
-            description="Attach models to providers using the same shared config state consumed by the graph inspector."
-          >
-            <ModelsSection config={config} setConfig={setConfig} />
+            <ProviderModelsSection config={config} setConfig={setConfig} schema={schema} />
           </SettingsSection>
         </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-zinc-200 bg-white/95 px-5 py-4 backdrop-blur sm:px-6">
+          <div className="text-sm text-zinc-500">
+            Save writes the current settings back to the gateway config.
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={onClose} disabled={busy}>
+              Close
+            </Button>
+            <Button onClick={onSave} disabled={busy}>
+              <Save className="h-4 w-4" />
+              Save Changes
+            </Button>
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function ProviderModelsSection({
+  config,
+  setConfig,
+  schema,
+}: {
+  config: GatewayConfig;
+  setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
+  schema: SettingsSchema | null;
+}) {
+  const providerSection = schema?.providers ?? null;
+  const modelSection = schema?.models ?? null;
+  const providerFields =
+    providerSection?.fields ?? [
+      { key: "id", label: "ID", type: "text" as const },
+      { key: "name", label: "Name", type: "text" as const },
+      { key: "base_url", label: "Base URL", type: "text" as const },
+      {
+        key: "default_headers",
+        label: "Default Headers",
+        type: "object_list" as const,
+        fields: [
+          { key: "name", label: "Header", type: "text" as const },
+          { key: "value", label: "Value", type: "text" as const },
+          { key: "secret_env", label: "Secret Env", type: "text" as const },
+          { key: "encrypted", label: "Encrypted", type: "boolean" as const },
+        ],
+      },
+    ];
+  const modelFields =
+    (modelSection?.fields ?? [
+      { key: "id", label: "ID", type: "text" as const },
+      { key: "name", label: "Name", type: "text" as const },
+      { key: "description", label: "Description", type: "textarea" as const },
+    ]).filter((field) => field.key !== "provider_id");
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+        <div>
+          <div className="text-sm font-medium text-zinc-900">Providers workspace</div>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            Add a provider first, then attach models directly inside its card.
+          </p>
+        </div>
+        <Button
+          className="gap-2"
+          onClick={() =>
+            setConfig((current) => ({
+              ...current,
+              providers: [
+                ...current.providers,
+                {
+                  id: `provider-${current.providers.length + 1}`,
+                  name: "New Provider",
+                  base_url: "https://example.com",
+                  default_headers: [],
+                },
+              ],
+            }))
+          }
+        >
+          <Plus className="h-4 w-4" />
+          {providerSection?.add_label ?? "Add Provider"}
+        </Button>
+      </div>
+
+      {config.providers.length === 0 ? (
+        <EmptyMiniState text={providerSection?.empty_text ?? "No providers configured."} />
+      ) : (
+        config.providers.map((provider, providerIndex) => {
+          const providerModels = config.models.filter((model) => model.provider_id === provider.id);
+
+          return (
+            <Card key={provider.id} className="rounded-[24px] border border-zinc-200 bg-white p-5 shadow-sm">
+              <SectionActions
+                title={provider.name || provider.id || `Provider ${providerIndex + 1}`}
+                onRemove={() =>
+                  setConfig((current) => removeProviderFromConfig(current, providerIndex, provider.id))
+                }
+              />
+
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-600">
+                    {provider.id}
+                  </div>
+                  <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-600">
+                    {providerModels.length} models
+                  </div>
+                  <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-600">
+                    {provider.default_headers.length} headers
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  {providerFields.map((field) => (
+                    <SchemaFieldControl
+                      key={`${provider.id}-${field.key}`}
+                      field={field}
+                      value={(provider as Record<string, unknown>)[field.key]}
+                      providerOptions={[]}
+                      onChange={(nextValue) => {
+                        if (field.key === "id") {
+                          setConfig((current) =>
+                            renameProviderInConfig(current, providerIndex, provider.id, String(nextValue)),
+                          );
+                          return;
+                        }
+
+                        const nextProviders = [...config.providers];
+                        nextProviders[providerIndex] = { ...provider, [field.key]: nextValue };
+                        setConfig((current) => ({ ...current, providers: nextProviders }));
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div className="space-y-3 border-t border-zinc-100 pt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
+                        Models
+                      </div>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        Models under {provider.name || provider.id}.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() =>
+                        setConfig((current) => ({
+                          ...current,
+                          models: [
+                            ...current.models,
+                            {
+                              id: `model-${current.models.length + 1}`,
+                              name: "New Model",
+                              provider_id: provider.id,
+                              description: "",
+                            },
+                          ],
+                        }))
+                      }
+                    >
+                      <Plus className="h-4 w-4" />
+                      {modelSection?.add_label ?? "Add Model"}
+                    </Button>
+                  </div>
+
+                  {providerModels.length === 0 ? (
+                    <EmptyMiniState text="No models attached to this provider." />
+                  ) : (
+                    providerModels.map((model, modelIndex) => {
+                      const absoluteModelIndex = config.models.findIndex((item) => item.id === model.id);
+                      return (
+                        <Card
+                          key={model.id}
+                          className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-4 shadow-none"
+                        >
+                          <SectionActions
+                            title={model.name || model.id || `Model ${modelIndex + 1}`}
+                            onRemove={() =>
+                              setConfig((current) =>
+                                removeModelFromConfig(current, absoluteModelIndex, model.id),
+                              )
+                            }
+                          />
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {modelFields.map((field) => (
+                              <SchemaFieldControl
+                                key={`${model.id}-${field.key}`}
+                                field={field}
+                                value={(model as Record<string, unknown>)[field.key]}
+                                providerOptions={[]}
+                                onChange={(nextValue) => {
+                                  if (field.key === "id") {
+                                    setConfig((current) =>
+                                      renameModelInConfig(current, absoluteModelIndex, model.id, String(nextValue)),
+                                    );
+                                    return;
+                                  }
+
+                                  const nextModels = [...config.models];
+                                  nextModels[absoluteModelIndex] = { ...model, [field.key]: nextValue };
+                                  setConfig((current) => ({ ...current, models: nextModels }));
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </Card>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </Card>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -735,12 +972,12 @@ function SettingsSection({
   children,
 }: React.PropsWithChildren<{ title: string; description: string }>) {
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-4 sm:p-5">
-      <div className="mb-4">
-        <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+    <section className="rounded-[24px] border border-zinc-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="mb-5">
+        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">
           {title}
         </div>
-        <p className="mt-1 text-sm text-zinc-600">{description}</p>
+        <p className="mt-1.5 max-w-2xl text-sm leading-6 text-zinc-600">{description}</p>
       </div>
       <div className="space-y-4">{children}</div>
     </section>
@@ -1039,6 +1276,394 @@ function ModelsSection({
   );
 }
 
+type SchemaListKind = "providers" | "models";
+
+function SchemaListSection({
+  config,
+  setConfig,
+  section,
+  kind,
+}: {
+  config: GatewayConfig;
+  setConfig: React.Dispatch<React.SetStateAction<GatewayConfig>>;
+  section: SettingsSchemaSection;
+  kind: SchemaListKind;
+}) {
+  const items = kind === "providers" ? config.providers : config.models;
+  const providerOptions = config.providers.map((provider) => ({
+    value: provider.id,
+    label: provider.name || provider.id,
+  }));
+
+  const addItem = () => {
+    setConfig((current) => {
+      if (kind === "providers") {
+        return {
+          ...current,
+          providers: [
+            ...current.providers,
+            {
+              id: `provider-${current.providers.length + 1}`,
+              name: "New Provider",
+              base_url: "https://example.com",
+              default_headers: [],
+            },
+          ],
+        };
+      }
+
+      return {
+        ...current,
+        models: [
+          ...current.models,
+          {
+            id: `model-${current.models.length + 1}`,
+            name: "New Model",
+            provider_id: current.providers[0]?.id ?? "",
+            description: "",
+          },
+        ],
+      };
+    });
+  };
+
+  const removeItem = (index: number, itemId: string) => {
+    setConfig((current) =>
+      kind === "providers"
+        ? removeProviderFromConfig(current, index, itemId)
+        : removeModelFromConfig(current, index, itemId),
+    );
+  };
+
+  const updateField = (
+    index: number,
+    fieldKey: string,
+    value: unknown,
+    currentItem: GatewayConfig["providers"][number] | GatewayConfig["models"][number],
+  ) => {
+    setConfig((current) => {
+      if (kind === "providers") {
+        const provider = current.providers[index];
+        if (!provider) {
+          return current;
+        }
+        if (fieldKey === "id") {
+          return renameProviderInConfig(current, index, provider.id, String(value));
+        }
+        const nextProviders = [...current.providers];
+        nextProviders[index] = { ...provider, [fieldKey]: value };
+        return { ...current, providers: nextProviders };
+      }
+
+      const model = current.models[index];
+      if (!model) {
+        return current;
+      }
+      if (fieldKey === "id") {
+        return renameModelInConfig(current, index, model.id, String(value));
+      }
+      const nextModels = [...current.models];
+      nextModels[index] = { ...model, [fieldKey]: value };
+      return { ...current, models: nextModels };
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button className="gap-2" onClick={addItem}>
+          <Plus className="h-4 w-4" />
+          {section.add_label ?? `Add ${section.title}`}
+        </Button>
+      </div>
+
+      {items.length === 0 ? (
+        <EmptyMiniState text={section.empty_text ?? `No ${section.title.toLowerCase()} configured.`} />
+      ) : (
+        items.map((item, index) => (
+          <Card key={item.id} className="rounded-2xl border border-zinc-200">
+            <SectionActions
+              title={item.name || item.id || `${section.title} ${index + 1}`}
+              onRemove={() => removeItem(index, item.id)}
+            />
+
+            <div className="space-y-4">
+              {section.fields.map((field) => (
+                <SchemaFieldControl
+                  key={field.key}
+                  field={field}
+                  value={(item as Record<string, unknown>)[field.key]}
+                  providerOptions={providerOptions}
+                  onChange={(nextValue) => updateField(index, field.key, nextValue, item)}
+                />
+              ))}
+            </div>
+          </Card>
+        ))
+      )}
+    </div>
+  );
+}
+
+function SchemaFieldControl({
+  field,
+  value,
+  providerOptions,
+  onChange,
+}: {
+  field: SettingsSchemaField;
+  value: unknown;
+  providerOptions: Array<{ value: string; label: string }>;
+  onChange: (value: unknown) => void;
+}) {
+  if (field.key === "default_headers" && field.type === "object_list") {
+    const items = Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+
+    const updateHeader = (index: number, patch: { name?: string; rawValue?: string; secretEnv?: string; encrypted?: boolean }) => {
+      const nextItems = items.map((item, itemIndex) => {
+        if (itemIndex !== index) {
+          return item;
+        }
+
+        const currentValue =
+          item.value && typeof item.value === "object" ? (item.value as Record<string, unknown>) : {};
+
+        return {
+          ...item,
+          name: patch.name ?? (typeof item.name === "string" ? item.name : ""),
+          value: {
+            value: patch.rawValue ?? (typeof currentValue.value === "string" ? currentValue.value : ""),
+            secret_env:
+              patch.secretEnv !== undefined
+                ? patch.secretEnv || null
+                : (typeof currentValue.secret_env === "string" ? currentValue.secret_env : null),
+            encrypted:
+              patch.encrypted ?? (typeof currentValue.encrypted === "boolean" ? currentValue.encrypted : false),
+          },
+        };
+      });
+
+      onChange(nextItems);
+    };
+
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <Label>{field.label}</Label>
+            {field.help_text ? <p className="mt-1 text-sm text-zinc-500">{field.help_text}</p> : null}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              onChange([
+                ...items,
+                {
+                  name: "X-New-Header",
+                  value: { value: "", secret_env: null, encrypted: false },
+                },
+              ])
+            }
+          >
+            Add Header
+          </Button>
+        </div>
+
+        {items.length === 0 ? (
+          <EmptyMiniState text="No default headers configured." />
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+            <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,0.9fr)_120px_44px] gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+              <div>Header</div>
+              <div>Value</div>
+              <div>Secret Env</div>
+              <div>Encrypted</div>
+              <div />
+            </div>
+            <div className="divide-y divide-zinc-100">
+              {items.map((item, index) => {
+                const currentValue =
+                  item.value && typeof item.value === "object" ? (item.value as Record<string, unknown>) : {};
+
+                return (
+                  <div
+                    key={`${field.key}-${index}`}
+                    className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,0.9fr)_120px_44px] gap-3 px-4 py-3"
+                  >
+                    <Input
+                      value={typeof item.name === "string" ? item.name : ""}
+                      onChange={(event) => updateHeader(index, { name: event.target.value })}
+                      placeholder="X-Header-Name"
+                    />
+                    <Input
+                      value={typeof currentValue.value === "string" ? currentValue.value : ""}
+                      onChange={(event) => updateHeader(index, { rawValue: event.target.value })}
+                      placeholder="Header value"
+                    />
+                    <Input
+                      value={typeof currentValue.secret_env === "string" ? currentValue.secret_env : ""}
+                      onChange={(event) => updateHeader(index, { secretEnv: event.target.value })}
+                      placeholder="PROXY_SECRET"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateHeader(index, {
+                          encrypted: !(typeof currentValue.encrypted === "boolean" && currentValue.encrypted),
+                        })
+                      }
+                      className={`inline-flex h-10 items-center justify-center rounded-md border px-3 text-sm transition ${
+                        typeof currentValue.encrypted === "boolean" && currentValue.encrypted
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300"
+                      }`}
+                    >
+                      {typeof currentValue.encrypted === "boolean" && currentValue.encrypted ? "Yes" : "No"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
+                      aria-label="Remove header"
+                      title="Remove header"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (field.type === "object_list") {
+    const items = Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+    const nestedFields = field.fields ?? [];
+
+    const addItem = () => {
+      const nextItem = Object.fromEntries(
+        nestedFields.map((nestedField) => [
+          nestedField.key,
+          nestedField.type === "boolean" ? false : "",
+        ]),
+      );
+      onChange([...items, nextItem]);
+    };
+
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <Label>{field.label}</Label>
+            {field.help_text ? <p className="mt-1 text-sm text-zinc-500">{field.help_text}</p> : null}
+          </div>
+          <Button variant="outline" size="sm" onClick={addItem}>
+            Add
+          </Button>
+        </div>
+
+        {items.length === 0 ? (
+          <EmptyMiniState text={`No ${field.label.toLowerCase()} configured.`} />
+        ) : (
+          items.map((item, index) => (
+            <Card key={`${field.key}-${index}`} className="rounded-2xl border border-zinc-200">
+              <SectionActions
+                title={(item.name as string | undefined) || `${field.label} ${index + 1}`}
+                onRemove={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
+              />
+              <div className="grid gap-3 md:grid-cols-2">
+                {nestedFields.map((nestedField) => (
+                  <SchemaFieldControl
+                    key={`${field.key}-${index}-${nestedField.key}`}
+                    field={nestedField}
+                    value={item[nestedField.key]}
+                    providerOptions={providerOptions}
+                    onChange={(nextValue) => {
+                      const nextItems = [...items];
+                      nextItems[index] = { ...item, [nestedField.key]: nextValue };
+                      onChange(nextItems);
+                    }}
+                  />
+                ))}
+              </div>
+            </Card>
+          ))
+        )}
+      </div>
+    );
+  }
+
+  if (field.type === "textarea") {
+    return (
+      <label className="block">
+        <Label>{field.label}</Label>
+        <Textarea
+          rows={4}
+          value={typeof value === "string" ? value : ""}
+          placeholder={field.placeholder ?? undefined}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </label>
+    );
+  }
+
+  if (field.type === "boolean") {
+    const enabled = Boolean(value);
+    return (
+      <label className="block">
+        <Label>{field.label}</Label>
+        <button
+          type="button"
+          onClick={() => onChange(!enabled)}
+          className={`inline-flex h-10 items-center rounded-md border px-3 text-sm transition ${
+            enabled
+              ? "border-zinc-900 bg-zinc-900 text-white"
+              : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300"
+          }`}
+        >
+          {enabled ? "Yes" : "No"}
+        </button>
+      </label>
+    );
+  }
+
+  if (field.type === "select") {
+    const options = field.option_source === "providers" ? providerOptions : [];
+    return (
+      <label className="block">
+        <Label>{field.label}</Label>
+        <select
+          value={typeof value === "string" ? value : ""}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-300"
+        >
+          <option value="">Select...</option>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  return (
+    <label className="block">
+      <Label>{field.label}</Label>
+      <Input
+        value={typeof value === "string" ? value : ""}
+        placeholder={field.placeholder ?? undefined}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
 function TopBarButton({
   children,
   disabled,
@@ -1065,7 +1690,7 @@ function TopBarButton({
 
 function EmptyMiniState({ text }: { text: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-zinc-200 px-4 py-6 text-sm text-zinc-500">
+    <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/80 px-4 py-6 text-sm text-zinc-500">
       {text}
     </div>
   );
@@ -1236,14 +1861,14 @@ function SectionActions({
   return (
     <div className="mb-4 flex items-center justify-between gap-3">
       {title ? (
-        <div className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-          {title}
+        <div className="min-w-0">
+          <div className="truncate text-base font-semibold text-zinc-950">{title}</div>
         </div>
       ) : (
         <div />
       )}
-      <Button onClick={onRemove} className="bg-white text-zinc-900">
-        <CircleOff className="mr-2 h-4 w-4" />
+      <Button variant="outline" onClick={onRemove} className="gap-2 bg-white text-zinc-700">
+        <CircleOff className="h-4 w-4" />
         Remove
       </Button>
     </div>
@@ -1252,7 +1877,7 @@ function SectionActions({
 
 function Label({ children }: React.PropsWithChildren) {
   return (
-    <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
+    <div className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
       {children}
     </div>
   );
@@ -1268,7 +1893,7 @@ function Field({
   onChange: (value: string) => void;
 }) {
   return (
-    <label>
+    <label className="block">
       <Label>{label}</Label>
       <Input value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
