@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::http::HeaderMap;
-use infrastructure::plugin_runtime_contract::RuntimeRequestHeader;
 use infrastructure::plugin_registry::LoadedPlugin;
+use infrastructure::plugin_runtime_contract::RuntimeRequestHeader;
 use wasmtime_wasi::sockets::SocketAddrUse;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder};
 
@@ -61,7 +61,13 @@ pub(crate) fn resolve_plugin_preopens(
     let mut preopens = BTreeMap::<String, PluginPreopenDir>::new();
 
     for relative in &node_config.read_dirs {
-        upsert_preopen_dir(&mut preopens, &root, relative, DirPerms::READ, FilePerms::READ);
+        upsert_preopen_dir(
+            &mut preopens,
+            &root,
+            relative,
+            DirPerms::READ,
+            FilePerms::READ,
+        );
     }
 
     for relative in &node_config.write_dirs {

@@ -21,7 +21,10 @@ pub struct GatewayState {
     pub plugin_registry: Arc<PluginRegistry>,
 }
 
-pub async fn proxy_request(State(state): State<GatewayState>, request: Request) -> impl IntoResponse {
+pub async fn proxy_request(
+    State(state): State<GatewayState>,
+    request: Request,
+) -> impl IntoResponse {
     let method = request.method().clone();
     let headers = request.headers().clone();
     let uri = request.uri().clone();

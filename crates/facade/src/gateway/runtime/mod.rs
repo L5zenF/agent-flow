@@ -1,33 +1,28 @@
 mod code_runner;
+mod component_runtime;
 mod contracts;
 mod wasi;
-mod component_runtime;
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
+use std::sync::mpsc::SyncSender;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use axum::http::HeaderMap;
-use infrastructure::plugin_runtime_contract::{RuntimeExecuteInput, RuntimeExecuteOutput};
-use infrastructure::plugin_registry::{LoadedPlugin, PluginRegistry};
 use ::wasmtime::component::ResourceTable;
 use ::wasmtime::{Engine, StoreLimits};
+use axum::http::HeaderMap;
+use infrastructure::plugin_registry::{LoadedPlugin, PluginRegistry};
+use infrastructure::plugin_runtime_contract::{RuntimeExecuteInput, RuntimeExecuteOutput};
 use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxView, WasiView};
 
+use self::exports::proxy_tools::proxy_node_plugin::node_plugin::ExecuteError;
 use crate::config::{CodeRunnerNodeConfig, ModelConfig, ProviderConfig, WasmPluginNodeConfig};
 use crate::gateway_execution::GraphNodeExecutor;
-use self::exports::proxy_tools::proxy_node_plugin::node_plugin::ExecuteError;
 
-#[cfg(test)]
-pub(crate) use wasi::{
-    plugin_workspace_root, resolve_plugin_network_policy, resolve_plugin_preopens,
-    socket_addr_allowed,
-};
 pub(crate) use component_runtime::WASMTIME_PLUGIN_RUNTIME;
 
 ::wasmtime::component::bindgen!({

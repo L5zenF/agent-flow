@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
+use ::wasmtime::Linker as CoreLinker;
+use ::wasmtime::{Memory, Store, StoreLimitsBuilder};
 use axum::http::HeaderMap;
+use infrastructure::plugin_registry::{PluginRegistry, PluginRuntimeKind};
 use infrastructure::plugin_runtime_contract::{
     CodeRunnerContextPatchOp, CodeRunnerHeaderOp, CodeRunnerInput, CodeRunnerLogLevel,
     CodeRunnerModel, CodeRunnerOutput, CodeRunnerProvider, CoreCodeRunnerRequest,
     RuntimeContextPatchOp, RuntimeExecuteInput, RuntimeExecuteOutput, RuntimeHeaderOp,
     RuntimeLogEntry, RuntimeLogLevel, RuntimeNodeConfig, RuntimePluginManifest,
 };
-use infrastructure::plugin_registry::{PluginRegistry, PluginRuntimeKind};
 use serde::Deserialize;
-use ::wasmtime::{Memory, Store, StoreLimitsBuilder};
-use ::wasmtime::Linker as CoreLinker;
 use wasmtime_wasi::WasiCtxBuilder;
 
 use super::component_runtime::log_runtime_output;
@@ -57,9 +57,16 @@ pub(crate) fn execute_code_runner_node(
         request_method: method.to_string(),
         current_path: resolved_path.to_string(),
         request_headers: super::wasi::current_request_headers(headers, outgoing_headers),
-        workflow_context: workflow_context.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
-        selected_provider_id: selected_provider.map(|provider| provider.id.clone()).unwrap_or_default(),
-        selected_model_id: selected_model.map(|model| model.id.clone()).unwrap_or_default(),
+        workflow_context: workflow_context
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        selected_provider_id: selected_provider
+            .map(|provider| provider.id.clone())
+            .unwrap_or_default(),
+        selected_model_id: selected_model
+            .map(|model| model.id.clone())
+            .unwrap_or_default(),
         node_config: RuntimeNodeConfig {
             manifest: RuntimePluginManifest {
                 id: node_id.to_string(),
@@ -76,7 +83,13 @@ pub(crate) fn execute_code_runner_node(
     };
 
     let output = execute_core_code_runner_plugin(plugin, node_id, node_config, &runtime_input)?;
-    apply_output(node_id, &output, workflow_context, outgoing_headers, resolved_path);
+    apply_output(
+        node_id,
+        &output,
+        workflow_context,
+        outgoing_headers,
+        resolved_path,
+    );
     Ok(output.next_port)
 }
 
@@ -97,7 +110,12 @@ fn execute_core_code_runner_plugin(
         )
     })?;
     let limits = StoreLimitsBuilder::new()
-        .memory_size(node_config.max_memory_bytes.try_into().unwrap_or(usize::MAX))
+        .memory_size(
+            node_config
+                .max_memory_bytes
+                .try_into()
+                .unwrap_or(usize::MAX),
+        )
         .trap_on_grow_failure(true)
         .build();
     let mut store = Store::new(
@@ -114,24 +132,28 @@ fn execute_core_code_runner_plugin(
     store.set_epoch_deadline(1);
     store.epoch_deadline_trap();
 
-    let instance = linker.instantiate(&mut store, plugin.module()).map_err(|error| {
-        format!(
-            "failed to instantiate code_runner plugin '{}': {error}",
-            plugin.plugin_id()
-        )
-    })?;
+    let instance = linker
+        .instantiate(&mut store, plugin.module())
+        .map_err(|error| {
+            format!(
+                "failed to instantiate code_runner plugin '{}': {error}",
+                plugin.plugin_id()
+            )
+        })?;
     let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
         format!(
             "code_runner plugin '{}' is missing exported memory",
             plugin.plugin_id()
         )
     })?;
-    let alloc = instance.get_typed_func::<u32, u32>(&mut store, "alloc").map_err(|error| {
-        format!(
-            "code_runner plugin '{}' is missing alloc export: {error}",
-            plugin.plugin_id()
-        )
-    })?;
+    let alloc = instance
+        .get_typed_func::<u32, u32>(&mut store, "alloc")
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' is missing alloc export: {error}",
+                plugin.plugin_id()
+            )
+        })?;
     let dealloc = instance
         .get_typed_func::<(u32, u32), ()>(&mut store, "dealloc")
         .map_err(|error| {
@@ -158,18 +180,22 @@ fn execute_core_code_runner_plugin(
         plugin.module().engine().clone(),
         std::time::Duration::from_millis(node_config.timeout_ms),
     );
-    let request_ptr = alloc.call(&mut store, request_json.len() as u32).map_err(|error| {
-        format!(
-            "code_runner plugin '{}' failed to allocate input buffer: {error}",
-            plugin.plugin_id()
-        )
-    })?;
-    memory.write(&mut store, request_ptr as usize, &request_json).map_err(|error| {
-        format!(
-            "code_runner plugin '{}' failed to write input buffer: {error}",
-            plugin.plugin_id()
-        )
-    })?;
+    let request_ptr = alloc
+        .call(&mut store, request_json.len() as u32)
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' failed to allocate input buffer: {error}",
+                plugin.plugin_id()
+            )
+        })?;
+    memory
+        .write(&mut store, request_ptr as usize, &request_json)
+        .map_err(|error| {
+            format!(
+                "code_runner plugin '{}' failed to write input buffer: {error}",
+                plugin.plugin_id()
+            )
+        })?;
     let packed_output = run_json
         .call(&mut store, (request_ptr, request_json.len() as u32))
         .map_err(|error| {
@@ -185,22 +211,25 @@ fn execute_core_code_runner_plugin(
     let _ = dealloc.call(&mut store, (request_ptr, request_json.len() as u32));
 
     let (output_ptr, output_len) = unpack_ptr_len(packed_output);
-    let response_json =
-        read_core_memory_bytes(&memory, &mut store, output_ptr, output_len).map_err(|error| {
+    let response_json = read_core_memory_bytes(&memory, &mut store, output_ptr, output_len)
+        .map_err(|error| {
             format!(
                 "code_runner plugin '{}' failed to read output buffer: {error}",
                 plugin.plugin_id()
             )
         })?;
     let _ = dealloc.call(&mut store, (output_ptr, output_len));
-    let envelope = serde_json::from_slice::<CoreCodeRunnerResponse>(&response_json).map_err(|error| {
-        format!("code_runner node '{node_id}' returned invalid runtime envelope: {error}")
-    })?;
+    let envelope =
+        serde_json::from_slice::<CoreCodeRunnerResponse>(&response_json).map_err(|error| {
+            format!("code_runner node '{node_id}' returned invalid runtime envelope: {error}")
+        })?;
 
     if !envelope.ok {
         return Err(format!(
             "code_runner node '{node_id}' execution failed: {}",
-            envelope.error.unwrap_or_else(|| "unknown guest error".to_string())
+            envelope
+                .error
+                .unwrap_or_else(|| "unknown guest error".to_string())
         ));
     }
 
@@ -243,26 +272,42 @@ fn parse_code_runner_output(node_id: &str, json: &str) -> Result<RuntimeExecuteO
         format!("code_runner node '{node_id}' returned invalid output JSON: {error}")
     })?;
     Ok(RuntimeExecuteOutput {
-        context_ops: output.context_patch.into_iter().map(|op| match op {
-            CodeRunnerContextPatchOp::Set { key, value } => RuntimeContextPatchOp::Set { key, value },
-            CodeRunnerContextPatchOp::Remove { key } => RuntimeContextPatchOp::Remove { key },
-        }).collect(),
-        header_ops: output.header_ops.into_iter().map(|op| match op {
-            CodeRunnerHeaderOp::Set { name, value } => RuntimeHeaderOp::Set { name, value },
-            CodeRunnerHeaderOp::Append { name, value } => RuntimeHeaderOp::Append { name, value },
-            CodeRunnerHeaderOp::Remove { name } => RuntimeHeaderOp::Remove { name },
-        }).collect(),
+        context_ops: output
+            .context_patch
+            .into_iter()
+            .map(|op| match op {
+                CodeRunnerContextPatchOp::Set { key, value } => {
+                    RuntimeContextPatchOp::Set { key, value }
+                }
+                CodeRunnerContextPatchOp::Remove { key } => RuntimeContextPatchOp::Remove { key },
+            })
+            .collect(),
+        header_ops: output
+            .header_ops
+            .into_iter()
+            .map(|op| match op {
+                CodeRunnerHeaderOp::Set { name, value } => RuntimeHeaderOp::Set { name, value },
+                CodeRunnerHeaderOp::Append { name, value } => {
+                    RuntimeHeaderOp::Append { name, value }
+                }
+                CodeRunnerHeaderOp::Remove { name } => RuntimeHeaderOp::Remove { name },
+            })
+            .collect(),
         path_rewrite: output.path_rewrite,
         next_port: output.next_port,
-        logs: output.logs.into_iter().map(|log| RuntimeLogEntry {
-            level: match log.level {
-                CodeRunnerLogLevel::Debug => RuntimeLogLevel::Debug,
-                CodeRunnerLogLevel::Info => RuntimeLogLevel::Info,
-                CodeRunnerLogLevel::Warn => RuntimeLogLevel::Warn,
-                CodeRunnerLogLevel::Error => RuntimeLogLevel::Error,
-            },
-            message: log.message,
-        }).collect(),
+        logs: output
+            .logs
+            .into_iter()
+            .map(|log| RuntimeLogEntry {
+                level: match log.level {
+                    CodeRunnerLogLevel::Debug => RuntimeLogLevel::Debug,
+                    CodeRunnerLogLevel::Info => RuntimeLogLevel::Info,
+                    CodeRunnerLogLevel::Warn => RuntimeLogLevel::Warn,
+                    CodeRunnerLogLevel::Error => RuntimeLogLevel::Error,
+                },
+                message: log.message,
+            })
+            .collect(),
     })
 }
 
@@ -308,7 +353,10 @@ fn apply_output(
                 outgoing_headers.insert(name.to_ascii_lowercase(), vec![value.clone()]);
             }
             RuntimeHeaderOp::Append { name, value } => {
-                outgoing_headers.entry(name.to_ascii_lowercase()).or_default().push(value.clone());
+                outgoing_headers
+                    .entry(name.to_ascii_lowercase())
+                    .or_default()
+                    .push(value.clone());
             }
             RuntimeHeaderOp::Remove { name } => {
                 outgoing_headers.remove(&name.to_ascii_lowercase());

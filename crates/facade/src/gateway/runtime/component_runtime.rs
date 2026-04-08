@@ -1,13 +1,15 @@
-use infrastructure::plugin_runtime_contract::{RuntimeExecuteInput, RuntimeExecuteOutput, RuntimeLogLevel};
-use infrastructure::plugin_registry::LoadedPlugin;
-use tracing::{error, info, warn};
 use ::wasmtime::component::Linker as ComponentLinker;
 use ::wasmtime::{Store, StoreLimitsBuilder};
+use infrastructure::plugin_registry::LoadedPlugin;
+use infrastructure::plugin_runtime_contract::{
+    RuntimeExecuteInput, RuntimeExecuteOutput, RuntimeLogLevel,
+};
+use tracing::{error, info, warn};
 
 use super::contracts::{from_wit_execute_output, to_wit_execute_input};
 use super::wasi::build_plugin_wasi_ctx;
 use super::{
-    describe_execute_error, PluginNodeRuntime, PluginStoreData, ProxyNodePlugin, TimeoutEpochGuard,
+    PluginNodeRuntime, PluginStoreData, ProxyNodePlugin, TimeoutEpochGuard, describe_execute_error,
 };
 use crate::config::WasmPluginNodeConfig;
 
@@ -88,17 +90,37 @@ impl PluginNodeRuntime for WasmtimePluginRuntime {
     }
 }
 
-pub(crate) fn log_runtime_output(node_id: &str, plugin: Option<&LoadedPlugin>, output: &RuntimeExecuteOutput) {
+pub(crate) fn log_runtime_output(
+    node_id: &str,
+    plugin: Option<&LoadedPlugin>,
+    output: &RuntimeExecuteOutput,
+) {
     for log in &output.logs {
         match (plugin, &log.level) {
-            (Some(plugin), RuntimeLogLevel::Debug) => info!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][debug]"),
-            (Some(plugin), RuntimeLogLevel::Info) => info!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][info]"),
-            (Some(plugin), RuntimeLogLevel::Warn) => warn!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][warn]"),
-            (Some(plugin), RuntimeLogLevel::Error) => error!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][error]"),
-            (None, RuntimeLogLevel::Debug) => info!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][debug]"),
-            (None, RuntimeLogLevel::Info) => info!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][info]"),
-            (None, RuntimeLogLevel::Warn) => warn!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][warn]"),
-            (None, RuntimeLogLevel::Error) => error!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][error]"),
+            (Some(plugin), RuntimeLogLevel::Debug) => {
+                info!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][debug]")
+            }
+            (Some(plugin), RuntimeLogLevel::Info) => {
+                info!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][info]")
+            }
+            (Some(plugin), RuntimeLogLevel::Warn) => {
+                warn!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][warn]")
+            }
+            (Some(plugin), RuntimeLogLevel::Error) => {
+                error!(plugin_id = %plugin.plugin_id(), node_id = %node_id, wasm_log = %log.message, "[wasm][error]")
+            }
+            (None, RuntimeLogLevel::Debug) => {
+                info!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][debug]")
+            }
+            (None, RuntimeLogLevel::Info) => {
+                info!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][info]")
+            }
+            (None, RuntimeLogLevel::Warn) => {
+                warn!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][warn]")
+            }
+            (None, RuntimeLogLevel::Error) => {
+                error!(node_id = %node_id, code_runner_log = %log.message, "[code-runner][error]")
+            }
         }
     }
 }

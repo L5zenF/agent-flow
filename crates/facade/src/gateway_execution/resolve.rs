@@ -4,8 +4,11 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
 use infrastructure::plugin_registry::PluginRegistry;
 
 use crate::config::{GatewayConfig, LoadedWorkflowSet, ModelConfig, ProviderConfig, RouteConfig};
-use crate::gateway_execution::{execute_rule_graph, inject_runtime_context, resolve_route, GraphNodeExecutor};
-use crate::rules::{build_header_map, RequestContext};
+use crate::rules::{RequestContext, build_header_map};
+
+use super::context::inject_runtime_context;
+use super::route_match::resolve_route;
+use super::{GraphNodeExecutor, execute_rule_graph};
 
 #[derive(Debug)]
 pub struct RequestResolution<'a> {
@@ -37,8 +40,16 @@ pub fn resolve_request<'a>(
     );
     if let Some(graph) = workflow_store.active_graph() {
         if !graph.nodes.is_empty() {
-            return execute_rule_graph(config, plugin_registry, executor, graph, method, uri, headers)
-                .map(Some);
+            return execute_rule_graph(
+                config,
+                plugin_registry,
+                executor,
+                graph,
+                method,
+                uri,
+                headers,
+            )
+            .map(Some);
         }
     }
 

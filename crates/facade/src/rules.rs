@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use application::{
-    evaluate_policy_expression, render_policy_template, resolve_policy_headers, HeaderActionInput,
-    HeaderRuleInput, HeaderValueInput, PolicyRequestFacts, ProviderDefaultHeaderInput,
-    RuleScopeInput,
+    HeaderActionInput, HeaderRuleInput, HeaderValueInput, PolicyRequestFacts,
+    ProviderDefaultHeaderInput, RuleScopeInput, evaluate_policy_expression, render_policy_template,
+    resolve_policy_headers,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use infrastructure::crypto::decrypt_header_value;
@@ -164,7 +164,7 @@ mod tests {
         HeaderActionConfig, HeaderRuleConfig, ModelConfig, ProviderConfig, RouteConfig, RuleScope,
     };
 
-    use super::{evaluate_expression, render_template, RequestContext};
+    use super::{RequestContext, evaluate_expression, render_template};
 
     #[test]
     fn evaluates_basic_expressions() {

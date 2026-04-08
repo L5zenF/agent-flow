@@ -1,16 +1,16 @@
 use application::{
-    gateway_settings_schema, reload_runtime_state, replace_config, validate_candidate_config,
-    SettingsSchema,
+    SettingsSchema, gateway_settings_schema, reload_runtime_state, replace_config,
+    validate_candidate_config,
 };
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 
 use crate::admin_api::types::AdminState;
 use crate::config::{
-    load_runtime_state, normalize_legacy_rule_graph, parse_config, runtime_state_from_config,
-    save_config_atomic, GatewayConfig,
+    GatewayConfig, load_runtime_state, normalize_legacy_rule_graph, parse_config,
+    runtime_state_from_config, save_config_atomic,
 };
 
 pub async fn get_config(State(state): State<AdminState>) -> impl IntoResponse {

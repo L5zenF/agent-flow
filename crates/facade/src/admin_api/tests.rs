@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
     use super::super::{
-        activate_workflow, create_workflow, get_workflows, put_workflow, validate_config_handler,
-        AdminState, CreateWorkflowRequest,
+        AdminState, CreateWorkflowRequest, activate_workflow, create_workflow, get_workflows,
+        put_workflow, validate_config_handler,
     };
-    use crate::config::{parse_config, runtime_state_from_config, GatewayConfig};
+    use crate::config::{GatewayConfig, parse_config, runtime_state_from_config};
+    use axum::Json;
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    use axum::Json;
     use infrastructure::plugin_registry::load_plugin_registry;
     use std::fs;
     use std::path::PathBuf;
@@ -217,7 +217,10 @@ description = "Fallback workflow"
         assert_eq!(summary.id, "fallback");
         assert!(summary.is_active);
         let runtime_state = state.runtime_state.read().await;
-        assert_eq!(runtime_state.config.active_workflow_id.as_deref(), Some("fallback"));
+        assert_eq!(
+            runtime_state.config.active_workflow_id.as_deref(),
+            Some("fallback")
+        );
         assert_eq!(
             runtime_state.workflow_set.active_workflow_id.as_deref(),
             Some("fallback")
@@ -244,7 +247,7 @@ description = "Fallback workflow"
         .await
         .expect("create should succeed")
         .1
-         .0;
+        .0;
 
         assert_eq!(summary.id, "new-flow");
         assert!(!summary.is_active);
@@ -254,11 +257,13 @@ description = "Fallback workflow"
         assert!(persisted_workflow.contains("start_node_id = \"start\""));
 
         let runtime_state = state.runtime_state.read().await;
-        assert!(runtime_state
-            .config
-            .workflows
-            .iter()
-            .any(|workflow| workflow.id == "new-flow"));
+        assert!(
+            runtime_state
+                .config
+                .workflows
+                .iter()
+                .any(|workflow| workflow.id == "new-flow")
+        );
         assert!(runtime_state.workflow_set.by_id.contains_key("new-flow"));
     }
 

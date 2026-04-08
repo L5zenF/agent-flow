@@ -4,8 +4,8 @@ use application::{WorkflowAdminError, WorkflowEntryInput};
 
 use crate::admin_api::types::WorkflowSummary;
 use crate::config::{
-    resolve_workflow_path, LoadedWorkflowSet, RuleGraphConfig, RuntimeState, WorkflowFileConfig,
-    WorkflowIndexEntry,
+    LoadedWorkflowSet, RuleGraphConfig, RuntimeState, WorkflowFileConfig, WorkflowIndexEntry,
+    resolve_workflow_path,
 };
 use infrastructure::plugin_registry::{
     ManifestCapability, ManifestCategory, ManifestIcon, ManifestTone,
@@ -65,7 +65,9 @@ pub fn workflow_document(workflows: &LoadedWorkflowSet, id: &str) -> Option<Work
     })
 }
 
-pub fn to_application_workflow_entries(workflows: &[WorkflowIndexEntry]) -> Vec<WorkflowEntryInput> {
+pub fn to_application_workflow_entries(
+    workflows: &[WorkflowIndexEntry],
+) -> Vec<WorkflowEntryInput> {
     workflows
         .iter()
         .map(|workflow| WorkflowEntryInput {
@@ -90,7 +92,8 @@ pub fn workflow_summary(
     workflow: &WorkflowIndexEntry,
     workflows: &LoadedWorkflowSet,
 ) -> WorkflowSummary {
-    let graph = workflow_document(workflows, workflow.id.as_str()).map(|document| document.workflow);
+    let graph =
+        workflow_document(workflows, workflow.id.as_str()).map(|document| document.workflow);
     WorkflowSummary {
         id: workflow.id.clone(),
         name: workflow.name.clone(),
@@ -109,7 +112,11 @@ pub fn ensure_active_workflow_file(
     let Some(active_workflow_id) = runtime_state.config.active_workflow_id.as_deref() else {
         return Ok(());
     };
-    if runtime_state.workflow_set.by_id.contains_key(active_workflow_id) {
+    if runtime_state
+        .workflow_set
+        .by_id
+        .contains_key(active_workflow_id)
+    {
         return Ok(());
     }
 

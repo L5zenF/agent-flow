@@ -1,5 +1,5 @@
-use axum::extract::State;
 use axum::Json;
+use axum::extract::State;
 
 use crate::admin_api::support::{
     manifest_capability_name, manifest_category_name, manifest_icon_name, manifest_tone_name,
@@ -26,7 +26,13 @@ pub async fn get_plugins(State(state): State<AdminState>) -> impl axum::response
             default_config_schema_hints: plugin.manifest().default_config_schema_hints.clone(),
             config_schema: plugin.manifest().config_schema.clone(),
             ui: PluginManifestUiSummary {
-                icon: plugin.manifest().ui.icon.as_ref().map(manifest_icon_name).map(str::to_string),
+                icon: plugin
+                    .manifest()
+                    .ui
+                    .icon
+                    .as_ref()
+                    .map(manifest_icon_name)
+                    .map(str::to_string),
                 category: plugin
                     .manifest()
                     .ui
@@ -34,7 +40,13 @@ pub async fn get_plugins(State(state): State<AdminState>) -> impl axum::response
                     .as_ref()
                     .map(manifest_category_name)
                     .map(str::to_string),
-                tone: plugin.manifest().ui.tone.as_ref().map(manifest_tone_name).map(str::to_string),
+                tone: plugin
+                    .manifest()
+                    .ui
+                    .tone
+                    .as_ref()
+                    .map(manifest_tone_name)
+                    .map(str::to_string),
                 order: plugin.manifest().ui.order,
                 tags: plugin.manifest().ui.tags.clone(),
             },

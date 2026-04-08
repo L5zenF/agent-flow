@@ -2,11 +2,10 @@ use std::collections::HashMap;
 
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
 
-use crate::config::{
-    GatewayConfig, ModelConfig, ProviderConfig, RouteConfig, RouterClauseConfig,
-};
-use crate::gateway_execution::inject_runtime_context;
-use crate::rules::{evaluate_expression, RequestContext};
+use crate::config::{GatewayConfig, ModelConfig, ProviderConfig, RouteConfig, RouterClauseConfig};
+use crate::rules::{RequestContext, evaluate_expression};
+
+use super::context::inject_runtime_context;
 
 pub fn resolve_route<'a>(
     config: &'a GatewayConfig,
