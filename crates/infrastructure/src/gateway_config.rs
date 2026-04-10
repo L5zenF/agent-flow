@@ -10,5 +10,15 @@ pub use io::{
     save_workflow_file_atomic,
 };
 pub use legacy::normalize_legacy_rule_graph;
-pub use model::*;
+pub use model::{
+    CodeRunnerLanguage, CodeRunnerNodeConfig, ConditionBuilderConfig, ConditionMode,
+    ConditionNodeConfig, CopyHeaderNodeConfig, GatewayConfig, GraphPosition, HeaderActionConfig,
+    HeaderConfig, HeaderMutationNodeConfig, HeaderNameNodeConfig, HeaderRuleConfig,
+    HeaderValueConfig, LoadedWorkflowSet, LogNodeConfig, MatchBranchConfig, MatchNodeConfig,
+    ModelConfig, NoteNodeConfig, ProviderConfig, RouteConfig, RouteProviderNodeConfig,
+    RouterClauseConfig, RouterNodeConfig, RouterRuleConfig, RuleGraphConfig, RuleGraphEdge,
+    RuleGraphNode, RuleGraphNodeType, RuleScope, RuntimeState, SelectModelNodeConfig,
+    SetContextNodeConfig, ValueNodeConfig, WasmCapability, WasmPluginNodeConfig,
+    WorkflowFileConfig, WorkflowIndexEntry,
+};
 pub use validate::{parse_config, validate_config};

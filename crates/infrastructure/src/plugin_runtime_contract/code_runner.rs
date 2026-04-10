@@ -1,10 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::plugin_runtime_contract::model::{
-    RuntimeContextPatchOp, RuntimeExecuteInput, RuntimeExecuteOutput, RuntimeHeaderOp,
-    RuntimeLogEntry, RuntimeLogLevel,
-};
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeRunnerInput<'a> {
@@ -90,79 +85,4 @@ pub enum CodeRunnerLogLevel {
 pub struct CodeRunnerLogEntry {
     pub level: CodeRunnerLogLevel,
     pub message: String,
-}
-
-pub fn build_code_runner_input(input: &RuntimeExecuteInput) -> CodeRunnerInput<'_> {
-    CodeRunnerInput {
-        method: input.request_method.as_str(),
-        path: input.current_path.as_str(),
-        headers: input
-            .request_headers
-            .iter()
-            .map(|header| (header.name.to_ascii_lowercase(), header.value.clone()))
-            .collect(),
-        context: input.workflow_context.iter().cloned().collect(),
-        provider: (!input.selected_provider_id.is_empty()).then(|| CodeRunnerProvider {
-            id: input.selected_provider_id.as_str(),
-            name: input.selected_provider_id.as_str(),
-        }),
-        model: (!input.selected_model_id.is_empty()).then(|| CodeRunnerModel {
-            id: input.selected_model_id.as_str(),
-            name: input.selected_model_id.as_str(),
-            provider_id: input.selected_provider_id.as_str(),
-        }),
-    }
-}
-
-pub fn normalize_code_runner_source(source: &str) -> String {
-    let trimmed = source.trim_start();
-    if trimmed.starts_with("export function run") {
-        source.replacen("export function run", "function run", 1)
-    } else {
-        source.to_string()
-    }
-}
-
-pub fn parse_code_runner_output(node_id: &str, json: &str) -> Result<RuntimeExecuteOutput, String> {
-    let output = serde_json::from_str::<CodeRunnerOutput>(json).map_err(|error| {
-        format!("code_runner node '{node_id}' returned invalid output JSON: {error}")
-    })?;
-    Ok(RuntimeExecuteOutput {
-        context_ops: output
-            .context_patch
-            .into_iter()
-            .map(|op| match op {
-                CodeRunnerContextPatchOp::Set { key, value } => {
-                    RuntimeContextPatchOp::Set { key, value }
-                }
-                CodeRunnerContextPatchOp::Remove { key } => RuntimeContextPatchOp::Remove { key },
-            })
-            .collect(),
-        header_ops: output
-            .header_ops
-            .into_iter()
-            .map(|op| match op {
-                CodeRunnerHeaderOp::Set { name, value } => RuntimeHeaderOp::Set { name, value },
-                CodeRunnerHeaderOp::Append { name, value } => {
-                    RuntimeHeaderOp::Append { name, value }
-                }
-                CodeRunnerHeaderOp::Remove { name } => RuntimeHeaderOp::Remove { name },
-            })
-            .collect(),
-        path_rewrite: output.path_rewrite,
-        next_port: output.next_port,
-        logs: output
-            .logs
-            .into_iter()
-            .map(|log| RuntimeLogEntry {
-                level: match log.level {
-                    CodeRunnerLogLevel::Debug => RuntimeLogLevel::Debug,
-                    CodeRunnerLogLevel::Info => RuntimeLogLevel::Info,
-                    CodeRunnerLogLevel::Warn => RuntimeLogLevel::Warn,
-                    CodeRunnerLogLevel::Error => RuntimeLogLevel::Error,
-                },
-                message: log.message,
-            })
-            .collect(),
-    })
 }
